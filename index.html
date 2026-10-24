@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prize Wheel</title>
+<meta name="description" content="Clean, ad-free prize games for giveaways and streams: a spinning wheel and Plinko.">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-game="wheel">
+<header>
+  <input id="title" type="text" value="Prize Wheel" aria-label="Title" maxlength="80">
+  <div class="seg" id="gameSwitch" role="group" aria-label="Game">
+    <button data-v="wheel">Wheel</button>
+    <button data-v="plinko">Plinko</button>
+  </div>
+  <button class="icon-btn" id="shareBtn" title="Copy share link">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+    <span class="lbl">Share</span>
+  </button>
+  <button class="icon-btn" id="presentBtn" title="Present mode (F)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+    <span class="lbl">Present</span>
+  </button>
+  <button class="icon-btn" id="soundBtn" title="Toggle sound" aria-pressed="true"></button>
+</header>
+
+<main>
+  <section class="stage" id="wheelStage" data-only="wheel">
+    <div id="wheelWrap">
+      <canvas id="wheel" role="button" aria-label="Spin the wheel" tabindex="0"></canvas>
+      <svg id="pointer" viewBox="0 0 40 48" aria-hidden="true">
+        <path d="M20 46 L4 10 A16 16 0 0 1 36 10 Z" fill="var(--accent)" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+        <circle cx="20" cy="14" r="5" fill="#fff"/>
+      </svg>
+    </div>
+    <div id="spinHint">Click the wheel or press <b>Space</b> to spin</div>
+  </section>
+
+  <section class="stage" id="plinkoStage" data-only="plinko">
+    <div id="plinkoWrap"><canvas id="plinko" aria-label="Plinko board. Click a numbered slot to drop a chip."></canvas></div>
+    <form class="drop-bar" id="dropForm" autocomplete="off">
+      <input type="number" id="slotInput" min="1" aria-label="Slot number" title="Slot number (or type it on the keyboard)">
+      <input type="text" id="viewerInput" placeholder="Called by (optional)" maxlength="60" aria-label="Viewer who called it">
+      <button class="btn primary" id="dropBtn" type="submit">Drop</button>
+    </form>
+  </section>
+
+  <aside>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="entriesTab">Entries <span class="count" id="entryCount"></span></button>
+      <button role="tab" aria-selected="false" data-tab="resultsTab">Results <span class="count" id="resultCount"></span></button>
+      <button role="tab" aria-selected="false" data-tab="settingsTab">Settings</button>
+    </div>
+
+    <div class="tab active" id="entriesTab">
+      <form class="add-row" id="addForm" autocomplete="off">
+        <input type="text" id="addName" placeholder="Add an entry…" aria-label="Entry name" maxlength="120">
+        <input type="number" id="addQty" value="1" min="1" max="999" aria-label="Quantity" title="How many">
+        <button class="btn primary sm" type="submit">Add</button>
+      </form>
+      <div class="row" id="addModeRow" hidden>
+        <div class="seg" id="addMode">
+          <button type="button" data-v="count"></button>
+          <button type="button" data-v="split"></button>
+        </div>
+        <p class="hint" id="addModeHint"></p>
+      </div>
+      <div class="row between">
+        <div class="row">
+          <button class="chip" id="shuffleBtn">Shuffle</button>
+          <button class="chip" id="sortBtn">Sort A–Z</button>
+          <button class="chip" id="dedupeBtn">Merge duplicates</button>
+          <button class="chip" id="resetCountsBtn">Reset counts</button>
+        </div>
+        <button class="chip" id="undoBtn" disabled>Undo</button>
+      </div>
+      <p class="hint" data-only="plinko">Bins run left to right in list order. The chip usually lands near where it starts, so edge bins are the hardest to reach.</p>
+      <ul id="itemList" aria-label="Entries"></ul>
+      <div id="pastePanel" hidden>
+        <textarea id="pasteText" spellcheck="false" placeholder="Paste names, one per line" aria-label="Paste a list"></textarea>
+        <div class="row">
+          <button class="btn primary sm" id="pasteAdd">Add all</button>
+          <button class="btn sm" id="pasteCancel">Cancel</button>
+        </div>
+      </div>
+      <div class="row">
+        <button class="chip" id="pasteBtn">Paste a list</button>
+        <select class="chip" id="presetSel" aria-label="Load a preset"></select>
+        <button class="chip" id="importBtn">Import .txt / .csv</button>
+        <button class="chip" id="clearBtn">Clear</button>
+      </div>
+      <input type="file" id="importFile" accept=".txt,.csv,text/plain,text/csv" hidden>
+    </div>
+
+    <div class="tab" id="resultsTab">
+      <div class="row between">
+        <span class="hint" id="resultSummary"></span>
+        <div class="row">
+          <button class="chip" id="copyResultsBtn">Copy</button>
+          <button class="chip" id="csvBtn">Export CSV</button>
+          <button class="chip" id="clearResultsBtn">Clear</button>
+        </div>
+      </div>
+      <ol id="history"></ol>
+    </div>
+
+    <div class="tab" id="settingsTab">
+      <p class="section-title" data-only="wheel">Wheel</p>
+      <div class="field" data-only="wheel">
+        <label for="duration">Spin duration: <span id="durationVal"></span></label>
+        <input type="range" id="duration" min="2" max="20" step="1">
+      </div>
+      <label class="check" data-only="wheel"><input type="checkbox" id="mysteryChk"> Mystery mode (hide names until it stops)</label>
+
+      <p class="section-title" data-only="plinko">Plinko</p>
+      <div class="field" data-only="plinko">
+        <span class="label">Drop speed</span>
+        <div class="seg" id="dropSpeed">
+          <button data-v="slow">Slow</button>
+          <button data-v="normal">Normal</button>
+          <button data-v="fast">Fast</button>
+        </div>
+      </div>
+      <hr>
+
+      <p class="section-title">Winners</p>
+      <div class="field">
+        <span class="label">After a win</span>
+        <div class="seg" id="removeMode">
+          <button data-v="ask">Ask</button>
+          <button data-v="auto">Auto-remove</button>
+          <button data-v="never">Keep</button>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="confettiChk"> Confetti on win</label>
+      <hr>
+
+      <p class="section-title">Look</p>
+      <label class="check"><input type="checkbox" id="greenChk"> Green-screen background (for OBS chroma key)</label>
+      <div class="field">
+        <label for="paletteSel">Colors</label>
+        <select id="paletteSel"></select>
+        <input type="text" id="customColors" placeholder="#ff5a5f, #ffb400, #00a699 …" aria-label="Custom hex colors" hidden>
+      </div>
+      <div class="field">
+        <span class="label">Appearance</span>
+        <div class="seg" id="themeMode">
+          <button data-v="auto">Auto</button>
+          <button data-v="light">Light</button>
+          <button data-v="dark">Dark</button>
+        </div>
+      </div>
+      <hr>
+
+      <p class="section-title">Logos</p>
+      <p class="hint">Uses your Twitch picture when connected. Upload an image to use something else in any spot.</p>
+      <div class="logo-row" data-spot="wheelCenter">
+        <span class="logo-thumb"></span>
+        <span class="meta"><label class="check"><input type="checkbox"> Wheel center</label><span class="hint"></span></span>
+        <span class="acts"><button class="chip" data-act="upload">Upload</button><button class="chip" data-act="clear">Remove</button></span>
+      </div>
+      <div class="logo-row" data-spot="plinkoChip">
+        <span class="logo-thumb"></span>
+        <span class="meta"><label class="check"><input type="checkbox"> Plinko chip</label><span class="hint"></span></span>
+        <span class="acts"><button class="chip" data-act="upload">Upload</button><button class="chip" data-act="clear">Remove</button></span>
+      </div>
+      <div class="logo-row" data-spot="plinkoHeader">
+        <span class="logo-thumb"></span>
+        <span class="meta"><label class="check"><input type="checkbox"> Plinko board header</label><span class="hint"></span></span>
+        <span class="acts"><button class="chip" data-act="upload">Upload</button><button class="chip" data-act="clear">Remove</button></span>
+      </div>
+      <input type="file" id="logoFile" accept="image/*" hidden>
+      <hr>
+
+      <p class="section-title">Twitch</p>
+      <div id="twitchStatus">
+        <span class="twitch-dot" id="twitchDot"></span>
+        <img id="twitchAvatar" alt="" hidden>
+        <span id="twitchStatusText">Not connected</span>
+      </div>
+      <div class="field" id="twitchSetup">
+        <label for="twitchClientId">Client ID</label>
+        <input type="text" id="twitchClientId" placeholder="From dev.twitch.tv/console" spellcheck="false" autocomplete="off">
+        <p class="hint">OAuth Redirect URL to register: <code id="redirectUrl"></code> <button class="chip" id="copyRedirect">Copy</button></p>
+      </div>
+      <p class="hint" id="twitchNote" hidden></p>
+      <div class="row">
+        <button class="btn primary sm" id="twitchConnect">Connect Twitch</button>
+        <button class="btn sm" id="twitchDisconnect" hidden>Disconnect</button>
+        <button class="chip" id="testChat">Send test message</button>
+      </div>
+      <label class="check"><input type="checkbox" id="announceChk"> Announce winners in chat</label>
+      <div class="field">
+        <label for="wheelTemplate">Wheel message</label>
+        <input type="text" id="wheelTemplate" maxlength="400">
+      </div>
+      <div class="field">
+        <label for="plinkoTemplate">Plinko message</label>
+        <input type="text" id="plinkoTemplate" maxlength="400">
+      </div>
+      <p class="hint">Placeholders: <code>{prize}</code> <code>{viewer}</code> <code>{slot}</code> <code>{channel}</code></p>
+      <hr>
+
+      <div class="row">
+        <button class="chip" id="backupBtn">Download backup (.json)</button>
+        <button class="chip" id="restoreBtn">Restore backup</button>
+        <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+      </div>
+      <p class="hint">Everything stays on your device: no accounts, ads or tracking. Winners are drawn with your browser's cryptographic random generator. If you connect Twitch, your browser talks to Twitch directly.</p>
+    </div>
+  </aside>
+</main>
+
+<button class="icon-btn" id="presentExit">Exit present mode</button>
+
+<dialog id="winDialog">
+  <div class="win-head" id="winHead"><small>Winner</small><strong id="winName"></strong><span id="winSub" hidden></span></div>
+  <div class="win-body">
+    <span class="note" id="winNote"></span>
+    <button class="btn danger" id="winRemove">Remove</button>
+    <button class="btn" id="winClose">Close</button>
+    <button class="btn primary" id="winAgain">Spin again</button>
+  </div>
+</dialog>
+
+<canvas id="confetti"></canvas>
+<div id="toast" role="status"></div>
+
+<script src="js/core.js"></script>
+<script src="js/items.js"></script>
+<script src="js/wheel.js"></script>
+<script src="js/plinko.js"></script>
+<script src="js/twitch.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
