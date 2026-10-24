@@ -15,46 +15,82 @@
   }
 
   // ---------- Entries ----------
-  // An item is one entry in a list: { id, name, qty, start, mode }.
-  //   qty   – how many are left (0 = off the board, still listed)
+  // One list of entries is shared by every game: { id, name, qty, start, modes, hide }.
+  //   qty   – how many are left, shared by all games (0 = off the board, still listed)
   //   start – the quantity it was set to, used by "Reset counts"
-  //   mode  – 'count': one slice/bin labelled "Name ×qty"
-  //           'split': qty separate slices/bins spread out
+  //   modes – per game: 'count' (one slice/bin labelled "Name ×qty", the default)
+  //           or 'split' (qty separate slices/bins spread out), e.g. { plinko: 'split' }
+  //   hide  – per game: true leaves the entry out of that game, e.g. { plinko: true }
   let uid = 0;
   const newId = () => `i${(uid++).toString(36)}`;
   const clampQty = (n) => Math.max(0, Math.min(999, Math.floor(+n) || 0));
-  const makeItem = (name, qty = 1, mode = 'count') => {
+  const flagMap = (o, value) => {
+    const out = {};
+    if (o && typeof o === 'object') for (const [k, v] of Object.entries(o).slice(0, 20)) if (v === value) out[k] = value;
+    return out;
+  };
+  const makeItem = (name, qty = 1, modes = {}) => {
     const q = clampQty(qty);
-    return { id: newId(), name, qty: q, start: q, mode: mode === 'split' ? 'split' : 'count' };
+    return { id: newId(), name, qty: q, start: q, modes: flagMap(modes, 'split'), hide: {} };
   };
   const itemsFromText = (text) => text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => makeItem(l.slice(0, 120)));
-  const compactItems = (items) => items.map((i) => [i.name, i.qty, i.start, i.mode]);
+  const compactItems = (items) => items.map((i) => [i.name, i.qty, i.start, i.modes, i.hide]);
+  const modeFor = (it, game) => (it.modes?.[game] === 'split' ? 'split' : 'count');
+  const includedIn = (it, game) => !it.hide?.[game];
 
-  function sanitizeItems(arr) {
+  // Validates items from storage, share links or backups. Older saves kept one `mode`
+  // per item for a single game; `legacyGame` says which game that mode belonged to.
+  function sanitizeItems(arr, legacyGame = 'wheel') {
     if (!Array.isArray(arr)) return null;
     return arr
-      .map((x) => (Array.isArray(x) ? { name: x[0], qty: x[1], start: x[2], mode: x[3] } : x))
+      .map((x) => (Array.isArray(x)
+        ? (typeof x[3] === 'string' ? { name: x[0], qty: x[1], start: x[2], mode: x[3] } : { name: x[0], qty: x[1], start: x[2], modes: x[3], hide: x[4] })
+        : x))
       .filter((x) => x && typeof x.name === 'string' && x.name.trim())
       .map((x) => {
         const qty = clampQty(x.qty ?? 1);
-        return { id: newId(), name: x.name.trim().slice(0, 120), qty, start: Math.max(qty, clampQty(x.start ?? qty)), mode: x.mode === 'split' ? 'split' : 'count' };
+        const modes = x.modes ? flagMap(x.modes, 'split') : (x.mode === 'split' ? { [legacyGame]: 'split' } : {});
+        return { id: newId(), name: x.name.trim().slice(0, 120), qty, start: Math.max(qty, clampQty(x.start ?? qty)), modes, hide: flagMap(x.hide, true) };
       });
   }
 
-  // One entry per slice/bin. A 'split' item contributes qty units; each item's copies are
-  // offset by its list position so they spread evenly around the wheel or along the bins.
-  function buildUnits(items) {
-    const live = items.filter((it) => it.qty > 0);
+  // Combines per-game lists (from before entries were shared) into one list. Same-named
+  // entries merge and add their counts; an entry stays out of games it wasn't in before,
+  // so every game looks the same as it did.
+  function mergeLists(parts) {
+    const byName = new Map(), out = [];
+    for (const { game, items } of parts) {
+      for (const it of items) {
+        const k = it.name.trim().toLowerCase();
+        let e = byName.get(k);
+        if (!e) { e = { ...makeItem(it.name, 0), seen: new Set() }; byName.set(k, e); out.push(e); }
+        e.qty += it.qty; e.start += it.start;
+        if (modeFor(it, game) === 'split') e.modes[game] = 'split';
+        e.seen.add(game);
+      }
+    }
+    for (const e of out) {
+      for (const { game } of parts) if (!e.seen.has(game)) e.hide[game] = true;
+      delete e.seen;
+      e.qty = clampQty(e.qty); e.start = Math.max(e.qty, clampQty(e.start));
+    }
+    return out;
+  }
+
+  // One entry per slice/bin for a game. A 'split' item contributes qty units; each item's
+  // copies are offset by its list position so they spread evenly around the wheel or bins.
+  function buildUnits(items, game) {
+    const live = items.filter((it) => it.qty > 0 && includedIn(it, game));
     const units = [];
     live.forEach((item, i) => {
       const offset = (i + 0.5) / live.length;
-      const copies = item.mode === 'split' ? item.qty : 1;
+      const copies = modeFor(item, game) === 'split' ? item.qty : 1;
       for (let j = 0; j < copies; j++) units.push({ item, key: (j + offset) / copies });
     });
     return units.sort((a, b) => a.key - b.key).map((u) => u.item);
   }
-  const showsCount = (it) => it.mode === 'count' && (it.start > 1 || it.qty > 1);
-  const suffixFor = (it) => (showsCount(it) ? ` ×${it.qty}` : '');
+  const showsCount = (it, game) => modeFor(it, game) === 'count' && (it.start > 1 || it.qty > 1);
+  const suffixFor = (it, game) => (showsCount(it, game) ? ` ×${it.qty}` : '');
 
   // ---------- Colors ----------
   const PALETTES = {
@@ -148,7 +184,20 @@
         o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
       });
     }
-    return { unlock, tick, fanfare };
+    // Rising "whoosh" for Plinko twists
+    function twist() {
+      if (!isOn()) return;
+      const a = unlock(); if (!a) return;
+      const t = a.currentTime;
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(260, t);
+      o.frequency.exponentialRampToValueAtTime(1300, t + 0.28);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.07, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.36);
+    }
+    return { unlock, tick, fanfare, twist };
   }
 
   // ---------- Confetti ----------
@@ -245,7 +294,8 @@
 
   PW.util = {
     TAU, $, safe, rand,
-    clampQty, makeItem, itemsFromText, compactItems, sanitizeItems, buildUnits, showsCount, suffixFor,
+    clampQty, makeItem, itemsFromText, compactItems, sanitizeItems, mergeLists, modeFor, includedIn,
+    buildUnits, showsCount, suffixFor,
     PALETTES, paletteColors, colorAt, textOn, cssVar, fitText, imageReady, drawCircleImage,
     createSound, confetti, toast, copy, download, setSeg, loadImage, shrinkImage, encodeJSON, decodeJSON,
   };

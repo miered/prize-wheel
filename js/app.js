@@ -15,8 +15,8 @@
   const OLD_LOGO_KEY = 'prizewheel.logo';
 
   const GAMES = {
-    wheel: { label: 'Wheel', items: 'wheelItems', unit: { one: 'slice', many: 'slices' } },
-    plinko: { label: 'Plinko', items: 'plinkoItems', unit: { one: 'bin', many: 'bins' } },
+    wheel: { label: 'Wheel', unit: { one: 'slice', many: 'slices' } },
+    plinko: { label: 'Plinko', unit: { one: 'bin', many: 'bins' } },
   };
   // Where a logo can appear, and the setting that switches it on
   const SPOTS = {
@@ -27,7 +27,8 @@
 
   const list = (text) => () => U.itemsFromText(text);
   const numbers = (n) => list(Array.from({ length: n }, (_, i) => i + 1).join('\n'));
-  const fromRows = (rows) => () => rows.map(([n, q, m]) => U.makeItem(n, q, m));
+  // [name, qty, display mode in Plinko]; presets show everything as one slice on the wheel
+  const fromRows = (rows) => () => rows.map(([n, q, m]) => U.makeItem(n, q, { plinko: m }));
   const PRESETS = {
     wheel: {
       yesno: { label: 'Yes / No', make: list('Yes\nNo') },
@@ -57,26 +58,27 @@
     },
   };
 
+  const OLD_PLINKO_TEMPLATE = '🎉 {viewer} dropped from slot {slot} and won {prize}!';
   const DEFAULTS = {
     title: 'Prize Wheel', game: 'wheel',
-    wheelItems: U.itemsFromText('Ava\nBen\nChloe\nDiego\nElla\nFinn\nGrace\nHiro'),
-    plinkoItems: PRESETS.plinko.prizes.make(),
+    items: PRESETS.plinko.prizes.make(),        // one list shared by every game
     duration: 8, mystery: false, dropSpeed: 'normal',
+    twistCount: 4, twistOn: Object.fromEntries(Object.keys(PW.TWISTS).map((k) => [k, true])),
+    goldenName: '🎁 Golden bonus', goldenQty: 1,
     removeMode: 'ask', confetti: true, sound: true, greenScreen: false,
     palette: 'vivid', customColors: '', theme: 'auto', addMode: 'count',
     logoWheelCenter: true, logoPlinkoChip: true, logoPlinkoHeader: true,
     twitchClientId: '', announce: true,
     wheelTemplate: '🎉 The wheel landed on {prize}!',
-    plinkoTemplate: '🎉 {viewer} dropped from slot {slot} and won {prize}!',
+    plinkoTemplate: '🎉 {viewer} dropped from slot {slot}{twists} and won {prize}!',
   };
-  const ITEM_KEYS = Object.values(GAMES).map((g) => g.items);
-  const SETTING_KEYS = Object.keys(DEFAULTS).filter((k) => !ITEM_KEYS.includes(k));
+  const SETTING_KEYS = Object.keys(DEFAULTS).filter((k) => k !== 'items' && k !== 'twistOn');
 
   // ---------- State ----------
-  const state = { ...DEFAULTS };
-  let history = [];          // [{ game, name, color, time, slot?, viewer? }]
+  const state = { ...DEFAULTS, twistOn: { ...DEFAULTS.twistOn } };
+  let history = [];          // [{ game, name, color, time, slot?, viewer?, twists? }]
   const logoUploads = {};    // spot -> Image uploaded by the user
-  let lastWinner = null;     // { item, game } awaiting the "take one" decision
+  let lastWinner = null;     // { prizes, golden } awaiting the "take" decision
 
   function save() {
     safe(() => localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, history })));
@@ -86,12 +88,27 @@
   function applyData(obj) {
     if (!obj || typeof obj !== 'object') return;
     for (const k of SETTING_KEYS) if (k in obj && typeof obj[k] === typeof DEFAULTS[k]) state[k] = obj[k];
-    for (const k of ITEM_KEYS) { const items = U.sanitizeItems(obj[k]); if (items) state[k] = items; }
-    // Saves from before Plinko kept the wheel list as `items`, or as one-per-line `entries` text
-    if (!obj.wheelItems) {
-      const legacy = U.sanitizeItems(obj.items) ?? (typeof obj.entries === 'string' ? U.itemsFromText(obj.entries) : null);
-      if (legacy) state.wheelItems = legacy;
+    if (obj.twistOn && typeof obj.twistOn === 'object') {
+      for (const k of Object.keys(DEFAULTS.twistOn)) if (typeof obj.twistOn[k] === 'boolean') state.twistOn[k] = obj.twistOn[k];
     }
+    state.twistCount = Math.max(0, Math.min(12, Math.round(state.twistCount) || 0));
+    state.goldenQty = U.clampQty(state.goldenQty);
+
+    // Entries: the shared list, or older saves' per-game lists merged into one
+    // (`wheelItems`/`plinkoItems`), or the very first version's one-per-line `entries` text.
+    let items = null;
+    if (obj.wheelItems || obj.plinkoItems) {
+      items = U.mergeLists([
+        { game: 'wheel', items: U.sanitizeItems(obj.wheelItems, 'wheel') || [] },
+        { game: 'plinko', items: U.sanitizeItems(obj.plinkoItems, 'plinko') || [] },
+      ]);
+    } else {
+      items = U.sanitizeItems(obj.items, 'wheel') ?? (typeof obj.entries === 'string' ? U.itemsFromText(obj.entries) : null);
+    }
+    if (items) state.items = items;
+
+    // Pick up the new {twists} placeholder if the old default message is still in use
+    if (state.plinkoTemplate === OLD_PLINKO_TEMPLATE) state.plinkoTemplate = DEFAULTS.plinkoTemplate;
     if (!GAMES[state.game]) state.game = 'wheel';
   }
 
@@ -129,22 +146,23 @@
 
   const editor = PW.createItemEditor({
     key: () => state.game,
-    items: (k) => state[GAMES[k].items],
-    setItems: (k, arr) => { state[GAMES[k].items] = arr; },
+    games: () => Object.fromEntries(Object.entries(GAMES).map(([k, g]) => [k, g.label])),
+    items: () => state.items,
+    setItems: (arr) => { state.items = arr; },
     unit: (k) => GAMES[k].unit,
     colorOf: (id) => cur().colorOf(id),
     presets: () => PRESETS[state.game],
     addMode: () => state.addMode,
     setAddMode: (v) => { state.addMode = v; save(); },
-    changed: (k) => { games[k].rebuild(); updateCounts(); save(); },
+    changed: () => { Object.values(games).forEach((g) => g.rebuild()); updateCounts(); save(); },
   });
 
   function updateCounts() {
-    const live = state[GAMES[state.game].items].filter((it) => it.qty > 0).length;
-    $('entryCount').textContent = state[GAMES[state.game].items].length ? `(${live})` : '';
+    const inGame = state.items.filter((it) => U.includedIn(it, state.game));
+    $('entryCount').textContent = inGame.length ? `(${inGame.filter((it) => it.qty > 0).length})` : '';
   }
 
-  function rebuildAll() { Object.values(games).forEach((g) => g.rebuild()); editor.render(); }
+  function rebuildAll() { Object.values(games).forEach((g) => g.rebuild()); editor.render(); updateCounts(); }
   function redrawAll() { Object.values(games).forEach((g) => g.draw()); }
 
   // ---------- Game switcher ----------
@@ -162,18 +180,36 @@
   }
 
   // ---------- Results ----------
+  // r: { game, prizes: [{ item, color, n }], slot?, viewer?, twists?: [twist keys], golden? }
+  const twistLabel = (k) => {
+    const t = PW.TWISTS[k];
+    return t ? `${t.icon === '×2' ? '✖️2' : t.icon} ${t.label}` : k;
+  };
+  const prizeText = (r) => {
+    const parts = r.prizes.map((p) => (p.n > 1 ? `${p.n}× ${p.item.name}` : p.item.name));
+    if (r.golden) parts.push(`⭐ ${state.goldenName}`);
+    return parts.join(' + ');
+  };
+
   function onResult(r) {
-    history.unshift({ game: r.game, name: r.item.name, color: r.color, time: new Date().toISOString(), slot: r.slot, viewer: r.viewer || undefined });
+    history.unshift({
+      game: r.game, name: prizeText(r), color: r.prizes[0].color, time: new Date().toISOString(),
+      slot: r.slot, viewer: r.viewer || undefined, twists: r.twists?.length ? r.twists : undefined,
+    });
     renderHistory();
     save();
     sound.fanfare();
-    if (state.confetti) U.confetti([r.color, ...app.colors()]);
+    if (state.confetti) U.confetti([...r.prizes.map((p) => p.color), ...(r.golden ? ['#ffc53d', '#ffe08a'] : []), ...app.colors()]);
     showWinner(r);
     announce(r);
   }
 
-  const fillTemplate = (tpl, r) => tpl.replace(/\{(viewer|prize|slot|channel)\}/g, (_, k) => ({
-    viewer: r.viewer || 'A viewer', prize: r.item.name, slot: r.slot ?? '', channel: twitch.session?.name || '',
+  const fillTemplate = (tpl, r) => tpl.replace(/\{(viewer|prize|slot|channel|twists)\}/g, (_, k) => ({
+    viewer: r.viewer || 'A viewer',
+    prize: prizeText(r),
+    slot: r.slot ?? '',
+    channel: twitch.session?.name || '',
+    twists: (r.twists || []).map((t) => ` → ${twistLabel(t)}`).join(''),
   })[k]);
 
   function announce(r) {
@@ -182,32 +218,44 @@
     if (tpl.trim()) twitch.say(fillTemplate(tpl, r));
   }
 
+  // Takes the won prizes off their counts (and the Golden bonus off its stock)
+  function takePrizes(r) {
+    for (const p of r.prizes) editor.takeOne(p.item, p.n);
+    if (r.golden && state.goldenQty > 0) {
+      state.goldenQty -= 1;
+      $('goldenQty').value = state.goldenQty;
+      save();
+    }
+  }
+
   const leftNote = (n) => (n > 0 ? `${n} left.` : 'None left. Removed from the board.');
 
   function showWinner(r) {
-    const { item, game } = r;
-    const q = item.qty;
-    lastWinner = { item, game };
-    $('winName').textContent = item.name;
-    $('winHead').style.background = r.color;
-    $('winHead').style.color = U.textOn(r.color);
-    const sub = game === 'plinko' ? [`Slot ${r.slot}`, r.viewer && `called by ${r.viewer}`].filter(Boolean).join(' · ') : '';
+    const single = r.prizes.length === 1 && r.prizes[0].n === 1 && !r.golden;
+    const q = r.prizes[0].item.qty;
+    lastWinner = r;
+    $('winName').textContent = prizeText(r);
+    $('winHead').style.background = r.prizes[0].color;
+    $('winHead').style.color = U.textOn(r.prizes[0].color);
+    const sub = r.game === 'plinko'
+      ? [`Slot ${r.slot}`, r.viewer && `called by ${r.viewer}`, ...(r.twists || []).map(twistLabel)].filter(Boolean).join(' · ')
+      : '';
     $('winSub').textContent = sub;
     $('winSub').hidden = !sub;
-    $('winAgain').textContent = game === 'plinko' ? 'Next drop' : 'Spin again';
+    $('winAgain').textContent = r.game === 'plinko' ? 'Next drop' : 'Spin again';
     const remove = $('winRemove');
     const note = $('winNote');
     note.textContent = '';
     remove.hidden = false;
-    remove.textContent = q > 1 ? `Take one (${q} → ${q - 1})` : 'Remove';
+    remove.textContent = !single ? 'Take prizes' : q > 1 ? `Take one (${q} → ${q - 1})` : 'Remove';
     if (state.removeMode === 'auto') {
-      editor.takeOne(item, game);
+      takePrizes(r);
       lastWinner = null;
-      note.textContent = leftNote(item.qty);
+      note.textContent = single ? leftNote(r.prizes[0].item.qty) : 'Counts updated.';
       remove.hidden = true;
     } else if (state.removeMode === 'never') {
       remove.hidden = true;
-      if (q > 1) note.textContent = leftNote(q);
+      if (single && q > 1) note.textContent = leftNote(q);
     }
     $('winDialog').showModal();
     $('winAgain').focus();
@@ -217,7 +265,7 @@
     return safe(() => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }), '');
   }
   const metaFor = (h) => (h.game === 'plinko'
-    ? ['Plinko', `slot ${h.slot}`, h.viewer].filter(Boolean).join(' · ')
+    ? ['Plinko', `slot ${h.slot}`, h.viewer, ...(h.twists || []).map(twistLabel)].filter(Boolean).join(' · ')
     : 'Wheel');
 
   function renderHistory() {
@@ -363,6 +411,11 @@
     $('plinkoTemplate').value = state.plinkoTemplate;
     U.setSeg('removeMode', state.removeMode);
     U.setSeg('dropSpeed', state.dropSpeed);
+    $('twistCount').value = state.twistCount;
+    $('twistCountVal').textContent = state.twistCount;
+    document.querySelectorAll('#twistGrid input[data-twist]').forEach((cb) => { cb.checked = state.twistOn[cb.dataset.twist]; });
+    $('goldenName').value = state.goldenName;
+    $('goldenQty').value = state.goldenQty;
     renderSound();
     renderLogos();
     renderTwitch();
@@ -411,8 +464,9 @@
     };
     $('csvBtn').onclick = () => {
       if (!history.length) return toast('No results yet');
-      const rows = [['#', 'Game', 'Result', 'Slot', 'Called by', 'Time'],
-        ...history.slice().reverse().map((h, i) => [i + 1, GAMES[h.game]?.label || 'Wheel', h.name, h.slot, h.viewer, h.time])];
+      const rows = [['#', 'Game', 'Result', 'Slot', 'Called by', 'Twists', 'Time'],
+        ...history.slice().reverse().map((h, i) => [i + 1, GAMES[h.game]?.label || 'Wheel', h.name, h.slot, h.viewer,
+          (h.twists || []).map((t) => PW.TWISTS[t]?.label || t).join(', '), h.time])];
       U.download(`${slug()}-results.csv`, rows.map((r) => r.map(csvCell).join(',')).join('\r\n'), 'text/csv');
     };
     $('clearResultsBtn').onclick = () => {
@@ -427,6 +481,27 @@
     segGroup('removeMode', 'removeMode');
     segGroup('dropSpeed', 'dropSpeed');
     segGroup('themeMode', 'theme', applyTheme);
+    // Plinko twists
+    const groups = {};
+    for (const [k, t] of Object.entries(PW.TWISTS)) (groups[t.group] ||= []).push([k, t]);
+    $('twistGrid').innerHTML = Object.entries(groups).map(([group, list]) => `
+      <p class="twist-group">${group}</p>
+      ${list.map(([k, t]) => `<label class="check twist-opt" title="${t.desc}">
+        <input type="checkbox" data-twist="${k}"><span class="twist-icon" style="background:${t.color}">${t.icon}</span>
+        <span><b>${t.label}</b><small>${t.desc}</small></span></label>`).join('')}`).join('');
+    const twistsChanged = () => { save(); games.plinko.rerollTwists(); };
+    $('twistGrid').addEventListener('change', (e) => {
+      const k = e.target.dataset.twist;
+      if (!k) return;
+      state.twistOn[k] = e.target.checked;
+      twistsChanged();
+    });
+    $('twistCount').oninput = () => { state.twistCount = +$('twistCount').value; $('twistCountVal').textContent = state.twistCount; twistsChanged(); };
+    $('rerollTwists').onclick = () => games.plinko.rerollTwists();
+    $('goldenName').oninput = () => { state.goldenName = $('goldenName').value.slice(0, 80); save(); };
+    $('goldenName').onchange = twistsChanged;
+    $('goldenQty').onchange = () => { state.goldenQty = U.clampQty($('goldenQty').value); $('goldenQty').value = state.goldenQty; twistsChanged(); };
+
     $('confettiChk').onchange = () => { state.confetti = $('confettiChk').checked; save(); };
     $('mysteryChk').onchange = () => { state.mystery = $('mysteryChk').checked; games.wheel.draw(); save(); };
     $('greenChk').onchange = () => {
@@ -483,7 +558,7 @@
     };
 
     // Backup
-    $('backupBtn').onclick = () => U.download(`${slug()}.json`, JSON.stringify({ app: 'prize-wheel', version: 2, ...state, history }, null, 2), 'application/json');
+    $('backupBtn').onclick = () => U.download(`${slug()}.json`, JSON.stringify({ app: 'prize-wheel', version: 3, ...state, history }, null, 2), 'application/json');
     $('restoreBtn').onclick = () => $('restoreFile').click();
     $('restoreFile').onchange = async (e) => {
       const f = e.target.files[0]; e.target.value = '';
@@ -498,10 +573,11 @@
     };
 
     $('shareBtn').onclick = () => {
-      const { title, game, duration, mystery, dropSpeed, removeMode, confetti, palette, customColors } = state;
+      const { title, game, duration, mystery, dropSpeed, removeMode, confetti, palette, customColors,
+        twistCount, twistOn, goldenName, goldenQty } = state;
       const data = {
         title, game, duration, mystery, dropSpeed, removeMode, confetti, palette, customColors,
-        wheelItems: U.compactItems(state.wheelItems), plinkoItems: U.compactItems(state.plinkoItems),
+        twistCount, twistOn, goldenName, goldenQty, items: U.compactItems(state.items),
       };
       const base = location.origin === 'null' ? location.href.split('#')[0] : location.origin + location.pathname;
       copy(`${base}#w=${U.encodeJSON(data)}`, 'Share link copied');
@@ -527,7 +603,7 @@
       dialog.close();
       if (state.game === 'plinko') { $('viewerInput').focus(); } else cur().start();
     };
-    $('winRemove').onclick = () => { if (lastWinner) editor.takeOne(lastWinner.item, lastWinner.game); dialog.close(); };
+    $('winRemove').onclick = () => { if (lastWinner) takePrizes(lastWinner); dialog.close(); };
     dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
     dialog.addEventListener('close', () => { lastWinner = null; });
 

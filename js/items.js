@@ -1,49 +1,55 @@
-/* Entry list editor shared by every game: add with a quantity, −/+ steppers, mode toggle,
-   rename, list tools and per-game undo. */
+/* Entry list editor. One list is shared by every game; each row shows the active game's
+   include checkbox and display mode. Add with a quantity, −/+ steppers, rename, list tools, undo. */
 (() => {
   'use strict';
   const PW = window.PW;
-  const { $, rand, clampQty, makeItem, itemsFromText, toast, setSeg } = PW.util;
+  const { $, rand, clampQty, makeItem, itemsFromText, modeFor, includedIn, toast, setSeg } = PW.util;
 
   // host: {
   //   key()               active game key
-  //   items(key)          that game's item array; setItems(key, arr) replaces it
+  //   games()             { key: label } for every game
+  //   items()             the shared item array; setItems(arr) replaces it
   //   unit(key)           { one: 'slice', many: 'slices' }
   //   colorOf(id)         dot color for an item in the active game
   //   presets()           { value: { label, make() } } for the active game
   //   addMode()           'count' | 'split'; setAddMode(v)
-  //   changed(key)        rebuild that game and save
+  //   changed()           rebuild every game and save
   // }
   PW.createItemEditor = (host) => {
     const list = $('itemList'), addName = $('addName'), addQty = $('addQty');
     const modeRow = $('addModeRow'), modeHint = $('addModeHint'), undoBtn = $('undoBtn');
     const presetSel = $('presetSel');
-    const stacks = {};
-    const stack = (k = host.key()) => (stacks[k] ||= []);
-    const items = () => host.items(host.key());
+    const stack = [];
+    const items = () => host.items();
 
-    function pushUndo(k = host.key()) {
-      const s = stack(k);
-      s.push(JSON.stringify(host.items(k)));
-      if (s.length > 50) s.shift();
+    function pushUndo() {
+      stack.push(JSON.stringify(items()));
+      if (stack.length > 50) stack.shift();
     }
 
-    // Call after any change to a game's items.
-    function commit(k = host.key()) {
-      host.changed(k);
-      if (k === host.key()) render();
+    // Call after any change to the list.
+    function commit() {
+      host.changed();
+      render();
     }
 
-    function takeOne(item, k) {
-      if (!item || !host.items(k).includes(item) || item.qty <= 0) return;
-      pushUndo(k);
-      item.qty -= 1;
-      commit(k);
+    // Takes up to n off an entry's count (a win). Returns how many were actually taken.
+    function takeOne(item, n = 1) {
+      if (!item || !items().includes(item) || item.qty <= 0) return 0;
+      const take = Math.min(n, item.qty);
+      pushUndo();
+      item.qty -= take;
+      commit();
+      return take;
     }
+
+    const gamesWith = (it) => Object.entries(host.games()).filter(([k]) => includedIn(it, k)).map(([, label]) => label);
 
     function render() {
-      undoBtn.disabled = !stack().length;
-      const unit = host.unit(host.key());
+      undoBtn.disabled = !stack.length;
+      const game = host.key();
+      const unit = host.unit(game);
+      const label = host.games()[game];
       // Keep keyboard focus on the same control across re-renders
       const active = document.activeElement;
       const focusRow = active?.closest?.('.item')?.dataset.id;
@@ -59,10 +65,12 @@
         return;
       }
       for (const it of all) {
+        const inGame = includedIn(it, game);
         const li = document.createElement('li');
-        li.className = 'item' + (it.qty === 0 ? ' out' : '');
+        li.className = 'item' + (it.qty === 0 ? ' out' : '') + (inGame ? '' : ' excluded');
         li.dataset.id = it.id;
         li.innerHTML = `
+          <input type="checkbox" class="inc" data-role="include">
           <span class="dot"></span>
           <input class="iname" data-role="name" aria-label="Entry name" maxlength="120">
           <button class="mode-btn" data-role="mode"></button>
@@ -71,16 +79,22 @@
             <input type="number" min="0" max="999" data-role="qty" aria-label="Quantity">
             <button data-role="inc" aria-label="One more">+</button>
           </span>
-          <button class="del" data-role="del" aria-label="Delete entry" title="Delete">×</button>`;
-        li.querySelector('.dot').style.background = host.colorOf(it.id) || 'transparent';
+          <button class="del" data-role="del" aria-label="Delete entry" title="Delete from all games">×</button>`;
+        const inc = li.querySelector('.inc');
+        inc.checked = inGame;
+        const where = gamesWith(it);
+        inc.title = `${inGame ? 'In' : 'Not in'} ${label}. ${where.length ? `Included in: ${where.join(', ')}` : 'Not in any game'}`;
+        inc.setAttribute('aria-label', `Include in ${label}`);
+        li.querySelector('.dot').style.background = (inGame && host.colorOf(it.id)) || 'transparent';
         li.querySelector('.iname').value = it.name;
         li.querySelector('[data-role=qty]').value = it.qty;
         const mode = li.querySelector('.mode-btn');
         if (it.start > 1 || it.qty > 1) {
-          mode.textContent = it.mode === 'split' ? 'Separate' : `1 ${unit.one}`;
-          mode.title = it.mode === 'split'
-            ? `${it.qty} separate ${unit.many}. Click to make it one ${unit.one} with a count.`
-            : `One ${unit.one} with a count. Click to use separate ${unit.many}.`;
+          const split = modeFor(it, game) === 'split';
+          mode.textContent = split ? 'Separate' : `1 ${unit.one}`;
+          mode.title = split
+            ? `${label}: ${it.qty} separate ${unit.many}. Click to make it one ${unit.one} with a count.`
+            : `${label}: one ${unit.one} with a count. Click to use separate ${unit.many}.`;
         } else {
           mode.hidden = true;
         }
@@ -98,7 +112,7 @@
       document.querySelector('#addMode [data-v=split]').textContent = `Separate ${unit.many}`;
       setSeg('addMode', mode);
       modeHint.textContent = mode === 'split'
-        ? `${qty} ${unit.many} spread out. More ${unit.many} mean better odds, and each win removes one.`
+        ? `${qty} ${unit.many} spread out here. More ${unit.many} mean better odds, and each win removes one.`
         : `One ${unit.one} labelled ×${qty}. Each win takes one off the count.`;
     }
 
@@ -118,7 +132,8 @@
       if (!name) { addName.focus(); return; }
       const qty = clampQty(addQty.value) || 1;
       pushUndo();
-      items().push(makeItem(name, qty, host.addMode()));
+      // The chosen display mode applies to the game you're in; other games default to one slice/bin
+      items().push(makeItem(name, qty, { [host.key()]: host.addMode() }));
       commit();
       addName.value = '';
       addQty.value = 1;
@@ -140,12 +155,13 @@
       const it = itemOf(e.target);
       if (!it) return;
       it.name = e.target.value;
-      host.changed(host.key());
+      host.changed();
     });
     list.addEventListener('change', (e) => {
       const it = itemOf(e.target);
       if (!it) return;
-      if (e.target.dataset.role === 'name') {
+      const role = e.target.dataset.role;
+      if (role === 'name') {
         const name = e.target.value.trim();
         if (!name) {
           // An emptied name reverts instead of leaving a blank slice
@@ -153,17 +169,21 @@
           commit();
           return;
         }
-        if (nameSnapshot) { stack().push(nameSnapshot); nameSnapshot = JSON.stringify(items()); }
+        if (nameSnapshot) { stack.push(nameSnapshot); nameSnapshot = JSON.stringify(items()); }
         it.name = name;
         commit();
-      } else if (e.target.dataset.role === 'qty') {
+      } else if (role === 'qty') {
         pushUndo();
         it.qty = it.start = clampQty(e.target.value);
+        commit();
+      } else if (role === 'include') {
+        pushUndo();
+        if (e.target.checked) delete it.hide[host.key()]; else it.hide[host.key()] = true;
         commit();
       }
     });
     list.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.target.blur();
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') e.target.blur();
     });
     list.addEventListener('click', (e) => {
       const role = e.target.dataset.role;
@@ -178,11 +198,12 @@
         commit();
       } else if (role === 'mode') {
         pushUndo();
-        it.mode = it.mode === 'split' ? 'count' : 'split';
+        const game = host.key();
+        if (modeFor(it, game) === 'split') delete it.modes[game]; else it.modes[game] = 'split';
         commit();
       } else if (role === 'del') {
         pushUndo();
-        host.setItems(host.key(), items().filter((x) => x !== it));
+        host.setItems(items().filter((x) => x !== it));
         commit();
       }
     });
@@ -207,13 +228,13 @@
         const k = it.name.trim().toLowerCase();
         const first = byName.get(k);
         if (first) { first.qty += it.qty; first.start += it.start; }
-        else { const copy = { ...it }; byName.set(k, copy); out.push(copy); }
+        else { const copy = { ...it, modes: { ...it.modes }, hide: { ...it.hide } }; byName.set(k, copy); out.push(copy); }
       }
       const merged = items().length - out.length;
       if (!merged) return toast('No duplicates found');
       pushUndo();
       out.forEach((it) => { it.qty = clampQty(it.qty); it.start = Math.max(it.qty, clampQty(it.start)); });
-      host.setItems(host.key(), out);
+      host.setItems(out);
       commit();
       toast(`Merged ${merged} duplicate${merged === 1 ? '' : 's'} into their counts`);
     };
@@ -226,15 +247,15 @@
     };
     $('clearBtn').onclick = () => {
       if (!items().length) return;
+      if (!confirm('This clears entries in all games. Continue?')) return;
       pushUndo();
-      host.setItems(host.key(), []);
+      host.setItems([]);
       commit();
       toast('Cleared. Undo is available.');
     };
     undoBtn.onclick = () => {
-      const s = stack();
-      if (!s.length) return;
-      host.setItems(host.key(), JSON.parse(s.pop()));
+      if (!stack.length) return;
+      host.setItems(JSON.parse(stack.pop()));
       commit();
     };
     presetSel.onchange = () => {
@@ -242,8 +263,9 @@
       presetSel.value = '';
       if (!p) return;
       pushUndo();
-      host.setItems(host.key(), p.make());
+      host.setItems(p.make());
       commit();
+      toast(`Loaded “${p.label}” for all games. Undo is available.`);
     };
 
     // ---------- Paste a list ----------

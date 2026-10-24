@@ -14,10 +14,10 @@
     let spinning = false;
 
     function rebuild() {
-      const units = U.buildUnits(app.state.wheelItems);
+      const units = U.buildUnits(app.state.items, 'wheel');
       const n = units.length, colors = app.colors();
       segments = units.map((item, i) => ({
-        item, name: item.name, suffix: U.suffixFor(item),
+        item, name: item.name, suffix: U.suffixFor(item, 'wheel'),
         start: i / n * TAU, end: (i + 1) / n * TAU, color: U.colorAt(colors, i, n),
       }));
       hint.style.visibility = n ? 'visible' : 'hidden';
@@ -146,7 +146,7 @@
         spinning = false;
         app.lock(false);
         const won = segments[segmentAtPointer(rotation)];
-        if (won) app.result({ game: 'wheel', item: won.item, color: won.color });
+        if (won) app.result({ game: 'wheel', prizes: [{ item: won.item, color: won.color, n: 1 }] });
       }
       requestAnimationFrame(frame);
     }

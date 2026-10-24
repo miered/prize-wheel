@@ -167,6 +167,37 @@ aside {
   border-radius: 8px; background: var(--surface-2); font-family: ui-monospace, Consolas, monospace; font-size: 13px;
 }
 #entriesTab.locked { pointer-events: none; opacity: .6; }
+.item .inc { width: 16px; height: 16px; accent-color: var(--accent); flex: none; margin: 0 2px; cursor: pointer; }
+.item.excluded { opacity: .45; }
+.item.excluded .iname { font-style: italic; }
+
+/* Plinko twist banner */
+#twistBanner {
+  position: absolute; left: 50%; top: 22%; transform: translate(-50%, -50%) scale(.6); opacity: 0;
+  padding: 12px 24px; border-radius: 16px; background: var(--tw, var(--accent)); color: #fff;
+  font: 900 clamp(22px, 4vw, 44px)/1.1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em;
+  text-shadow: 0 2px 6px rgba(0,0,0,.35); box-shadow: 0 10px 40px rgba(0,0,0,.35); pointer-events: none; white-space: nowrap;
+}
+#twistBanner.show { animation: twist-pop 1.5s ease-out forwards; }
+@keyframes twist-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.6) rotate(-4deg); }
+  15% { opacity: 1; transform: translate(-50%, -50%) scale(1.08) rotate(2deg); }
+  25% { transform: translate(-50%, -50%) scale(1) rotate(0); }
+  80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -60%) scale(.95); }
+}
+
+/* Twist settings */
+.twist-grid { display: flex; flex-direction: column; gap: 6px; }
+.twist-group { margin: 6px 0 0; font-size: 12px; font-weight: 650; color: var(--muted); }
+.twist-opt { align-items: center; padding: 4px 6px; border-radius: 8px; }
+.twist-opt:hover { background: var(--surface-2); }
+.twist-opt span:last-child { display: flex; flex-direction: column; line-height: 1.25; }
+.twist-opt small { color: var(--muted); font-size: 12px; }
+.twist-icon {
+  width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  color: #fff; font-weight: 800; font-size: 14px; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border);
+}
 
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .row.between { justify-content: space-between; }
