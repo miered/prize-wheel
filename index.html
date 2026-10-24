@@ -14,6 +14,11 @@
     <button data-v="wheel">Wheel</button>
     <button data-v="plinko">Plinko</button>
   </div>
+  <button class="icon-btn twitch-btn" id="twitchHeaderBtn" hidden>
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0 1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+    <img id="twitchHeaderAvatar" alt="" hidden>
+    <span class="lbl" id="twitchHeaderText">Connect Twitch</span>
+  </button>
   <button class="icon-btn" id="shareBtn" title="Copy share link">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
     <span class="lbl">Share</span>
@@ -179,17 +184,21 @@
         <img id="twitchAvatar" alt="" hidden>
         <span id="twitchStatusText">Not connected</span>
       </div>
-      <div class="field" id="twitchSetup">
-        <label for="twitchClientId">Client ID</label>
-        <input type="text" id="twitchClientId" placeholder="From dev.twitch.tv/console" spellcheck="false" autocomplete="off">
-        <p class="hint">OAuth Redirect URL to register: <code id="redirectUrl"></code> <button class="chip" id="copyRedirect">Copy</button></p>
-      </div>
       <p class="hint" id="twitchNote" hidden></p>
       <div class="row">
         <button class="btn primary sm" id="twitchConnect">Connect Twitch</button>
         <button class="btn sm" id="twitchDisconnect" hidden>Disconnect</button>
         <button class="chip" id="testChat">Send test message</button>
       </div>
+      <details id="twitchSetup">
+        <summary class="hint" id="twitchSetupSummary">Advanced: use your own Twitch app</summary>
+        <div class="field">
+          <label for="twitchClientId">Client ID</label>
+          <input type="text" id="twitchClientId" placeholder="From dev.twitch.tv/console" spellcheck="false" autocomplete="off">
+          <p class="hint">OAuth Redirect URL to register: <code id="redirectUrl"></code> <button class="chip" id="copyRedirect">Copy</button></p>
+          <p class="hint" id="builtinHint">Leave the Client ID empty to use the built-in app.</p>
+        </div>
+      </details>
       <label class="check"><input type="checkbox" id="announceChk"> Announce winners in chat</label>
       <div class="field">
         <label for="wheelTemplate">Wheel message</label>

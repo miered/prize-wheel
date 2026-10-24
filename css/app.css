@@ -60,6 +60,15 @@ header {
 .icon-btn:hover { background: var(--surface-2); }
 .icon-btn svg { width: 18px; height: 18px; }
 #gameSwitch button { padding: 7px 16px; font-size: 14px; font-weight: 600; }
+.twitch-btn { background: #9146ff; border-color: #9146ff; color: #fff; font-weight: 600; }
+.twitch-btn:hover { background: #772ce8; }
+.twitch-btn.on { background: var(--surface); border-color: var(--border); color: var(--text); font-weight: 550; }
+.twitch-btn.on:hover { background: var(--surface-2); }
+.twitch-btn.on svg { color: #9146ff; }
+#twitchHeaderAvatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
+#twitchHeaderAvatar:not([hidden]) + .lbl { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+#twitchSetup summary { cursor: pointer; }
+#twitchSetup .field { margin-top: 10px; }
 
 /* ---------- Layout ---------- */
 main {

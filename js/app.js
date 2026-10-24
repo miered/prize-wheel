@@ -6,6 +6,10 @@
   const U = PW.util;
   const { $, safe, toast, copy } = U;
 
+  // Public Client ID of the shared Twitch app, so streamers only have to click Connect and Authorize.
+  // Not a secret. Anyone can override it under Settings → Twitch → Advanced.
+  const TWITCH_CLIENT_ID = 'ee3unqhvjtonr9kr6lojfsnkvxzabl';
+
   const STORE_KEY = 'prizewheel.v1';
   const LOGO_KEY = (spot) => `prizewheel.logo.${spot}`;
   const OLD_LOGO_KEY = 'prizewheel.logo';
@@ -107,7 +111,8 @@
 
   // ---------- Twitch, games and the entry editor ----------
   const sound = U.createSound(() => state.sound);
-  const twitch = PW.createTwitch({ clientId: () => state.twitchClientId, changed: () => refreshLogos() });
+  const twitchClientId = () => state.twitchClientId.trim() || TWITCH_CLIENT_ID;
+  const twitch = PW.createTwitch({ clientId: twitchClientId, changed: () => refreshLogos() });
 
   const app = {
     state, sound,
@@ -291,7 +296,11 @@
     $('twitchAvatar').hidden = !twitch.avatar;
     if (twitch.avatar) $('twitchAvatar').src = twitch.avatar.src;
     $('twitchStatusText').textContent = s ? `Connected as ${s.name}` : 'Not connected';
+    // With a built-in Client ID the setup fields are an optional "Advanced" section
     $('twitchSetup').hidden = !!s;
+    $('twitchSetupSummary').textContent = TWITCH_CLIENT_ID ? 'Advanced: use your own Twitch app' : 'Twitch app setup';
+    $('builtinHint').hidden = !TWITCH_CLIENT_ID;
+    if (!TWITCH_CLIENT_ID && !state.twitchClientId) $('twitchSetup').open = true;
     $('twitchConnect').hidden = !!s;
     $('twitchDisconnect').hidden = !s;
     $('testChat').disabled = !s;
@@ -301,6 +310,22 @@
     $('twitchNote').textContent = hosted ? ''
       : 'Twitch sign-in only works once the app is hosted online (for example on GitHub Pages). See SETUP.md.';
     $('twitchNote').hidden = hosted;
+
+    // Header button: one click to connect; shows the channel once connected
+    const hb = $('twitchHeaderBtn');
+    hb.hidden = !hosted && !s;
+    hb.classList.toggle('on', !!s);
+    $('twitchHeaderAvatar').hidden = !(s && twitch.avatar);
+    if (s && twitch.avatar) $('twitchHeaderAvatar').src = twitch.avatar.src;
+    $('twitchHeaderText').textContent = s ? s.name : 'Connect Twitch';
+    hb.title = s ? 'Twitch connected. Click for Twitch settings.' : 'Connect your Twitch account';
+    hb.querySelector('svg').style.display = s && twitch.avatar ? 'none' : '';
+  }
+
+  function openTwitchSettings() {
+    document.querySelector('.tabs [data-tab=settingsTab]').click();
+    if (document.body.classList.contains('present')) togglePresent(false);
+    $('twitchStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // ---------- Controls ----------
@@ -442,7 +467,13 @@
     // Twitch
     $('twitchClientId').oninput = () => { state.twitchClientId = $('twitchClientId').value.trim(); save(); };
     $('copyRedirect').onclick = () => copy(twitch.redirectUri(), 'Redirect URL copied');
-    $('twitchConnect').onclick = () => twitch.connect();
+    const connect = () => {
+      if (!twitchClientId()) { openTwitchSettings(); $('twitchSetup').open = true; $('twitchClientId').focus(); return; }
+      twitch.connect();
+    };
+    $('twitchConnect').onclick = connect;
+    $('twitchHeaderBtn').onclick = () => (twitch.session ? openTwitchSettings() : connect());
+    $('twitchClientId').addEventListener('change', renderTwitch);
     $('twitchDisconnect').onclick = () => { twitch.disconnect(); toast('Disconnected from Twitch'); };
     $('announceChk').onchange = () => { state.announce = $('announceChk').checked; save(); };
     $('wheelTemplate').oninput = () => { state.wheelTemplate = $('wheelTemplate').value; save(); };

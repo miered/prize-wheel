@@ -39,6 +39,15 @@ republishes automatically within a minute or two.
 
 ---
 
+## For streamers using the hosted app
+
+Click **Connect Twitch** in the header, then **Authorize** on Twitch. That's all: the app's
+built-in Twitch app is used, and your sign-in stays in your own browser.
+
+Parts 2 and 3 below are only for whoever hosts their **own copy** of the app.
+
+---
+
 ## Part 2: Register a Twitch app (gives you a Client ID)
 
 Twitch requires **two-factor authentication** on your account before you can register apps.
@@ -61,9 +70,10 @@ Turn it on first at <https://www.twitch.tv/settings/security>.
 
 ## Part 3: Connect the app
 
-1. Open your GitHub Pages address.
-2. Go to **Settings → Twitch** and paste the **Client ID**.
-3. Click **Connect Twitch**, sign in, and approve. The app only asks to **send chat
+1. Put the Client ID in `js/app.js` as `TWITCH_CLIENT_ID` so every visitor can use it. Or,
+   for just yourself, paste it under **Settings → Twitch → Advanced: use your own Twitch app**.
+2. Open your GitHub Pages address.
+3. Click **Connect Twitch** (top right), sign in, and approve. The app only asks to **send chat
    messages as you** (`user:write:chat`).
 4. Back in the app you'll see **Connected as YourName**:
    - Your Twitch profile picture appears in the wheel center, on the Plinko chip and in the
