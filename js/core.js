@@ -234,12 +234,20 @@
 
   // ---------- UI helpers ----------
   let toastTimer;
-  function toast(msg) {
+  // action (optional): { label, run } adds a button, e.g. Undo
+  function toast(msg, action) {
     const el = $('toast');
     el.textContent = msg;
+    if (action) {
+      const b = document.createElement('button');
+      b.textContent = action.label;
+      b.onclick = () => { el.classList.remove('show'); action.run(); };
+      el.append(' ', b);
+    }
+    el.classList.toggle('actionable', !!action);
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+    toastTimer = setTimeout(() => el.classList.remove('show'), action ? 7000 : 2600);
   }
   async function copy(text, msg) {
     try { await navigator.clipboard.writeText(text); toast(msg); }

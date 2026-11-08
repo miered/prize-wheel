@@ -301,6 +301,9 @@
       toast(`Imported ${names.length} entr${names.length === 1 ? 'y' : 'ies'}`);
     };
 
-    return { render, renderAddMode, populatePresets, takeOne };
+    // Called when a different saved wheel's list is loaded, so Undo can't restore the old one into it
+    const clearUndo = () => { stack.length = 0; render(); };
+
+    return { render, renderAddMode, populatePresets, takeOne, clearUndo };
   };
 })();

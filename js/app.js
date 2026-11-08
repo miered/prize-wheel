@@ -13,6 +13,7 @@
   const STORE_KEY = 'prizewheel.v1';
   const LOGO_KEY = (spot) => `prizewheel.logo.${spot}`;
   const OLD_LOGO_KEY = 'prizewheel.logo';
+  const WHEEL_LOGO_KEY = (wheelId) => `prizewheel.logo.wheelCenter.${wheelId}`;
 
   const GAMES = {
     wheel: { label: 'Wheel', unit: { one: 'slice', many: 'slices' } },
@@ -72,19 +73,42 @@
     wheelTemplate: '🎉 The wheel landed on {prize}!',
     plinkoTemplate: '🎉 {viewer} dropped from slot {slot}{twists} and won {prize}!',
   };
-  const SETTING_KEYS = Object.keys(DEFAULTS).filter((k) => k !== 'items' && k !== 'twistOn');
+  // Saved per wheel rather than app-wide (the wheel's name is the `title`)
+  const WHEEL_KEYS = ['title', 'palette', 'customColors', 'duration'];
+  const SETTING_KEYS = Object.keys(DEFAULTS).filter((k) => k !== 'items' && k !== 'twistOn' && !WHEEL_KEYS.includes(k));
 
   // ---------- State ----------
+  // `state` holds app-wide settings plus the active wheel's fields (items, title, palette,
+  // customColors, duration); `history` is the active wheel's results. Other wheels wait in `wheels`.
   const state = { ...DEFAULTS, twistOn: { ...DEFAULTS.twistOn } };
   let history = [];          // [{ game, name, color, time, slot?, viewer?, twists? }]
-  const logoUploads = {};    // spot -> Image uploaded by the user
+  let wheels = [];           // [{ id, name, items, palette, customColors, duration, history }]
+  let activeId = '';
+  const logoUploads = {};    // spot -> Image uploaded by the user (wheelCenter is the active wheel's)
   let lastWinner = null;     // { prizes, golden } awaiting the "take" decision
 
-  function save() {
-    safe(() => localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, history })));
+  const newWheelId = () => `w${Date.now().toString(36)}${Math.floor(U.rand() * 1e6).toString(36)}`;
+  const activeWheel = () => wheels.find((w) => w.id === activeId);
+
+  // Copies the live fields back into the active wheel's record
+  function syncActive() {
+    const w = activeWheel();
+    if (!w) return;
+    Object.assign(w, { name: state.title, items: state.items, palette: state.palette, customColors: state.customColors, duration: state.duration, history });
+  }
+  function loadWheel(w) {
+    activeId = w.id;
+    Object.assign(state, { title: w.name, items: w.items, palette: w.palette, customColors: w.customColors, duration: w.duration });
+    history = w.history;
   }
 
-  // Copies validated settings and items from a stored, shared or restored object.
+  function save() {
+    syncActive();
+    const { items, ...settings } = state;
+    safe(() => localStorage.setItem(STORE_KEY, JSON.stringify({ ...settings, wheels, activeWheel: activeId })));
+  }
+
+  // Copies validated app-wide settings from a stored, shared or restored object.
   function applyData(obj) {
     if (!obj || typeof obj !== 'object') return;
     for (const k of SETTING_KEYS) if (k in obj && typeof obj[k] === typeof DEFAULTS[k]) state[k] = obj[k];
@@ -93,10 +117,18 @@
     }
     state.twistCount = Math.max(0, Math.min(12, Math.round(state.twistCount) || 0));
     state.goldenQty = U.clampQty(state.goldenQty);
+    // Pick up the new {twists} placeholder if the old default message is still in use
+    if (state.plinkoTemplate === OLD_PLINKO_TEMPLATE) state.plinkoTemplate = DEFAULTS.plinkoTemplate;
+    if (!GAMES[state.game]) state.game = 'wheel';
+  }
 
-    // Entries: the shared list, or older saves' per-game lists merged into one
-    // (`wheelItems`/`plinkoItems`), or the very first version's one-per-line `entries` text.
-    let items = null;
+  // Builds a validated wheel record from a saved wheel, a share link, or an older save
+  // (which kept one wheel's fields at the top level). Returns null if it has no entries field.
+  function wheelFromData(obj, fallbackName = DEFAULTS.title) {
+    if (!obj || typeof obj !== 'object') return null;
+    // Entries: the shared list, older per-game lists merged into one (`wheelItems`/`plinkoItems`),
+    // or the very first version's one-per-line `entries` text
+    let items;
     if (obj.wheelItems || obj.plinkoItems) {
       items = U.mergeLists([
         { game: 'wheel', items: U.sanitizeItems(obj.wheelItems, 'wheel') || [] },
@@ -105,23 +137,57 @@
     } else {
       items = U.sanitizeItems(obj.items, 'wheel') ?? (typeof obj.entries === 'string' ? U.itemsFromText(obj.entries) : null);
     }
-    if (items) state.items = items;
-
-    // Pick up the new {twists} placeholder if the old default message is still in use
-    if (state.plinkoTemplate === OLD_PLINKO_TEMPLATE) state.plinkoTemplate = DEFAULTS.plinkoTemplate;
-    if (!GAMES[state.game]) state.game = 'wheel';
+    if (!items) return null;
+    const pick = (k) => (typeof obj[k] === typeof DEFAULTS[k] ? obj[k] : DEFAULTS[k]);
+    const name = String(obj.name ?? obj.title ?? '').trim().slice(0, 80) || fallbackName;
+    return {
+      id: typeof obj.id === 'string' && /^w[a-z0-9]+$/.test(obj.id) ? obj.id : newWheelId(),
+      name, items, palette: pick('palette'), customColors: pick('customColors'),
+      duration: Math.max(2, Math.min(20, Math.round(pick('duration')))),
+      history: Array.isArray(obj.history) ? obj.history.filter((h) => h && typeof h.name === 'string') : [],
+    };
   }
 
+  // Replaces all wheels from a save or backup (or wraps an older single-wheel save as the first wheel)
+  function loadWheels(obj) {
+    const list = Array.isArray(obj?.wheels)
+      ? obj.wheels.map((w, i) => wheelFromData(w, `Wheel ${i + 1}`)).filter(Boolean)
+      : [wheelFromData(obj)].filter(Boolean);
+    if (!list.length) return false;
+    wheels = list;
+    loadWheel(wheels.find((w) => w.id === obj.activeWheel) || wheels[0]);
+    return true;
+  }
+
+  const uniqueName = (base) => {
+    const names = new Set(wheels.map((w) => w.name.toLowerCase()));
+    if (!names.has(base.toLowerCase())) return base;
+    for (let n = 2; ; n++) if (!names.has(`${base} (${n})`.toLowerCase())) return `${base} (${n})`;
+  };
+
+  let openedShare = false;
   function load() {
     const stored = safe(() => JSON.parse(localStorage.getItem(STORE_KEY)), null);
-    if (stored) {
-      applyData(stored);
-      if (Array.isArray(stored.history)) history = stored.history.filter((h) => h && typeof h.name === 'string');
+    if (stored) applyData(stored);
+    if (!stored || !loadWheels(stored)) {
+      wheels = [wheelFromData({ title: DEFAULTS.title, items: DEFAULTS.items })];
+      loadWheel(wheels[0]);
     }
+    // A share link opens as a new saved wheel rather than replacing yours
     const m = /^#w=([A-Za-z0-9_-]+)$/.exec(location.hash);
     if (m) {
-      applyData(U.decodeJSON(m[1]));
-      history = [];
+      const shared = U.decodeJSON(m[1]);
+      applyData(shared);
+      const w = wheelFromData(shared, 'Shared wheel');
+      if (w) {
+        syncActive();
+        w.id = newWheelId();
+        w.name = uniqueName(w.name);
+        w.history = [];
+        wheels.push(w);
+        loadWheel(w);
+        openedShare = true;
+      }
       safe(() => window.history.replaceState(null, '', location.pathname + location.search));
     }
   }
@@ -297,24 +363,179 @@
   const slug = () => (state.title || 'prizes').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'prizes';
   const csvCell = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
 
+  // ---------- Saved wheels ----------
+  const entryCount = (n) => `${n} entr${n === 1 ? 'y' : 'ies'}`;
+
+  function renderWheelBar() {
+    $('wheelName').textContent = state.title || 'Untitled wheel';
+    $('wheelMenuBtn').title = `Switch wheel (${wheels.length} saved)`;
+  }
+
+  // Refreshes everything that depends on which wheel is active
+  function afterWheelChange() {
+    lastWinner = null;
+    app.closeDialog();
+    editor.clearUndo();
+    syncControls();
+    rebuildAll();
+    renderHistory();
+    renderWheelBar();
+    loadWheelLogo();
+    save();
+  }
+
+  function switchWheel(id) {
+    const w = wheels.find((x) => x.id === id);
+    if (!w || id === activeId) return;
+    if (busy()) return toast('Wait for the current round to finish');
+    syncActive();
+    loadWheel(w);
+    afterWheelChange();
+  }
+
+  function newWheel(kind) {
+    if (busy()) return toast('Wait for the current round to finish');
+    syncActive();
+    const copy = kind === 'copy';
+    const w = {
+      id: newWheelId(),
+      name: uniqueName(copy ? `${state.title} copy` : `Wheel ${wheels.length + 1}`),
+      items: copy ? U.sanitizeItems(JSON.parse(JSON.stringify(state.items))) : [],
+      palette: state.palette, customColors: state.customColors, duration: state.duration, history: [],
+    };
+    if (copy) {
+      const logo = readLogo(WHEEL_LOGO_KEY(activeId));
+      if (logo) safe(() => localStorage.setItem(WHEEL_LOGO_KEY(w.id), logo));
+    }
+    wheels.splice(wheels.findIndex((x) => x.id === activeId) + 1, 0, w);
+    loadWheel(w);
+    afterWheelChange();
+    startRename();
+  }
+
+  function deleteWheel() {
+    if (wheels.length < 2) return toast("You can't delete your only wheel");
+    if (busy()) return toast('Wait for the current round to finish');
+    syncActive();
+    const idx = wheels.findIndex((w) => w.id === activeId);
+    const gone = wheels[idx];
+    const logo = readLogo(WHEEL_LOGO_KEY(gone.id));
+    wheels.splice(idx, 1);
+    safe(() => localStorage.removeItem(WHEEL_LOGO_KEY(gone.id)));
+    loadWheel(wheels[Math.min(idx, wheels.length - 1)]);
+    afterWheelChange();
+    toast(`Deleted “${gone.name}”`, {
+      label: 'Undo',
+      run: () => {
+        if (busy() || wheels.includes(gone)) return;
+        syncActive();
+        wheels.splice(Math.min(idx, wheels.length), 0, gone);
+        if (logo) safe(() => localStorage.setItem(WHEEL_LOGO_KEY(gone.id), logo));
+        loadWheel(gone);
+        afterWheelChange();
+      },
+    });
+  }
+
+  function setWheelName(name) {
+    state.title = name;
+    $('title').value = name;
+    document.title = name || 'Prize Wheel';
+    renderWheelBar();
+    games.plinko.draw();
+    save();
+  }
+  function startRename() {
+    const input = $('wheelRename');
+    input.value = state.title;
+    $('wheelMenuBtn').hidden = true;
+    input.hidden = false;
+    input.focus();
+    input.select();
+  }
+  function finishRename(keep) {
+    const input = $('wheelRename');
+    if (input.hidden) return;
+    const name = input.value.trim().slice(0, 80);
+    input.hidden = true;
+    $('wheelMenuBtn').hidden = false;
+    if (keep && name && name !== state.title) setWheelName(name);
+  }
+
+  function renderWheelMenu() {
+    syncActive();
+    const menu = $('wheelMenu');
+    menu.innerHTML = '';
+    for (const w of wheels) {
+      const b = document.createElement('button');
+      b.setAttribute('role', 'menuitem');
+      b.dataset.id = w.id;
+      if (w.id === activeId) b.setAttribute('aria-current', 'true');
+      b.innerHTML = '<span class="wb-check"></span><span class="wb-name"></span><span class="wb-count"></span>';
+      b.querySelector('.wb-check').textContent = w.id === activeId ? '✓' : '';
+      b.querySelector('.wb-name').textContent = w.name;
+      b.querySelector('.wb-count').textContent = entryCount(w.items.length);
+      menu.appendChild(b);
+    }
+    menu.insertAdjacentHTML('beforeend', `<hr>
+      <button role="menuitem" data-act="rename">Rename this wheel</button>
+      <button role="menuitem" data-act="copy">Duplicate this wheel</button>
+      <button role="menuitem" data-act="delete" class="danger" ${wheels.length < 2 ? 'disabled title="You need at least one wheel"' : ''}>Delete this wheel</button>`);
+  }
+
+  // Dropdown menus in the wheel bar
+  function setMenu(menu, btn, open) {
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) menu.querySelector('button:not([disabled])')?.focus();
+  }
+  function closeMenus() {
+    setMenu($('wheelMenu'), $('wheelMenuBtn'), false);
+    setMenu($('newWheelMenu'), $('newWheelBtn'), false);
+  }
+
   // ---------- Logos ----------
+  // The wheel-center logo belongs to each wheel; the Plinko logos are app-wide
+  const logoKey = (spot, wheelId = activeId) => (spot === 'wheelCenter' ? WHEEL_LOGO_KEY(wheelId) : LOGO_KEY(spot));
+  const readLogo = (key) => safe(() => localStorage.getItem(key), null);
+
   async function setLogoUpload(spot, dataUrl, persist = true) {
-    try { logoUploads[spot] = await U.loadImage(dataUrl); } catch { return; }
-    if (persist && !safe(() => { localStorage.setItem(LOGO_KEY(spot), dataUrl); return true; }, false)) {
+    const forWheel = activeId;
+    let img;
+    try { img = await U.loadImage(dataUrl); } catch { return; }
+    if (spot === 'wheelCenter' && forWheel !== activeId) return;   // switched wheels while loading
+    logoUploads[spot] = img;
+    if (persist && !safe(() => { localStorage.setItem(logoKey(spot, forWheel), dataUrl); return true; }, false)) {
       toast('Image is too large to remember after reload');
     }
     refreshLogos();
   }
+  function clearLogoUpload(spot) {
+    delete logoUploads[spot];
+    safe(() => localStorage.removeItem(logoKey(spot)));
+    refreshLogos();
+  }
+  // Shows the active wheel's own center logo (or none)
+  function loadWheelLogo() {
+    delete logoUploads.wheelCenter;
+    const data = readLogo(logoKey('wheelCenter'));
+    if (data) setLogoUpload('wheelCenter', data, false);
+    else refreshLogos();
+  }
   function loadLogos() {
-    // Before per-spot logos there was one upload for the wheel center
-    const old = safe(() => localStorage.getItem(OLD_LOGO_KEY), null);
-    if (old && !safe(() => localStorage.getItem(LOGO_KEY('wheelCenter')), null)) {
-      safe(() => { localStorage.setItem(LOGO_KEY('wheelCenter'), old); localStorage.removeItem(OLD_LOGO_KEY); });
+    // Older saves had one app-wide wheel-center upload; it becomes the first wheel's logo
+    for (const old of [LOGO_KEY('wheelCenter'), OLD_LOGO_KEY]) {
+      const data = readLogo(old);
+      if (!data) continue;
+      if (!readLogo(WHEEL_LOGO_KEY(wheels[0].id))) safe(() => localStorage.setItem(WHEEL_LOGO_KEY(wheels[0].id), data));
+      safe(() => localStorage.removeItem(old));
     }
     for (const spot of Object.keys(SPOTS)) {
-      const data = safe(() => localStorage.getItem(LOGO_KEY(spot)), null);
+      if (spot === 'wheelCenter') continue;
+      const data = readLogo(logoKey(spot));
       if (data) setLogoUpload(spot, data, false);
     }
+    loadWheelLogo();
   }
 
   function renderLogos() {
@@ -450,12 +671,51 @@
       else if (e.key === 'Escape' && document.body.classList.contains('present')) togglePresent(false);
     });
 
+    // The header title is the active wheel's name
     $('title').addEventListener('input', () => {
       state.title = $('title').value;
       document.title = state.title || 'Prize Wheel';
+      renderWheelBar();
       games.plinko.draw();
       save();
     });
+
+    // Saved-wheels bar
+    $('wheelMenuBtn').onclick = (e) => {
+      e.stopPropagation();
+      const open = $('wheelMenu').hidden;
+      closeMenus();
+      if (open) { renderWheelMenu(); setMenu($('wheelMenu'), $('wheelMenuBtn'), true); }
+    };
+    $('newWheelBtn').onclick = (e) => {
+      e.stopPropagation();
+      const open = $('newWheelMenu').hidden;
+      closeMenus();
+      if (open) setMenu($('newWheelMenu'), $('newWheelBtn'), true);
+    };
+    $('wheelMenu').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      closeMenus();
+      if (b.dataset.id) switchWheel(b.dataset.id);
+      else if (b.dataset.act === 'rename') startRename();
+      else if (b.dataset.act === 'copy') newWheel('copy');
+      else if (b.dataset.act === 'delete') deleteWheel();
+    };
+    $('newWheelMenu').onclick = (e) => {
+      const b = e.target.closest('button[data-new]');
+      if (!b) return;
+      closeMenus();
+      newWheel(b.dataset.new);
+    };
+    $('wheelRenameBtn').onclick = startRename;
+    $('wheelRename').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finishRename(true); $('wheelMenuBtn').focus(); }
+      else if (e.key === 'Escape') { e.preventDefault(); finishRename(false); $('wheelMenuBtn').focus(); }
+    });
+    $('wheelRename').addEventListener('blur', () => finishRename(true));
+    document.addEventListener('click', (e) => { if (!e.target.closest('.wb-menu')) closeMenus(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.closest?.('.wb-pop')) { closeMenus(); } });
 
     // Results
     $('copyResultsBtn').onclick = () => {
@@ -527,11 +787,7 @@
       const spot = row.dataset.spot;
       row.querySelector('input[type=checkbox]').onchange = (e) => { state[SPOTS[spot].setting] = e.target.checked; save(); refreshLogos(); };
       row.querySelector('[data-act=upload]').onclick = () => { uploadSpot = spot; $('logoFile').click(); };
-      row.querySelector('[data-act=clear]').onclick = () => {
-        delete logoUploads[spot];
-        safe(() => localStorage.removeItem(LOGO_KEY(spot)));
-        refreshLogos();
-      };
+      row.querySelector('[data-act=clear]').onclick = () => clearLogoUpload(spot);
     });
     $('logoFile').onchange = async (e) => {
       const f = e.target.files[0]; e.target.value = '';
@@ -558,17 +814,24 @@
     };
 
     // Backup
-    $('backupBtn').onclick = () => U.download(`${slug()}.json`, JSON.stringify({ app: 'prize-wheel', version: 3, ...state, history }, null, 2), 'application/json');
+    // Backups hold every saved wheel (uploaded images stay in this browser)
+    $('backupBtn').onclick = () => {
+      syncActive();
+      const { items, ...settings } = state;
+      U.download(`${slug()}.json`, JSON.stringify({ app: 'prize-wheel', version: 4, ...settings, wheels, activeWheel: activeId }, null, 2), 'application/json');
+    };
     $('restoreBtn').onclick = () => $('restoreFile').click();
     $('restoreFile').onchange = async (e) => {
       const f = e.target.files[0]; e.target.value = '';
       if (!f) return;
       try {
         const data = JSON.parse(await f.text());
+        if (busy()) return toast('Wait for the current round to finish');
+        if (!loadWheels(data)) throw new Error('No wheels in backup');
         applyData(data);
-        if (Array.isArray(data.history)) history = data.history.filter((h) => h && typeof h.name === 'string');
-        syncControls(); rebuildAll(); renderHistory(); switchGame(state.game); save();
-        toast('Backup restored');
+        afterWheelChange();
+        switchGame(state.game);
+        toast(`Backup restored (${wheels.length} wheel${wheels.length === 1 ? '' : 's'})`);
       } catch { toast("That file isn't a valid backup"); }
     };
 
@@ -580,7 +843,7 @@
         twistCount, twistOn, goldenName, goldenQty, items: U.compactItems(state.items),
       };
       const base = location.origin === 'null' ? location.href.split('#')[0] : location.origin + location.pathname;
-      copy(`${base}#w=${U.encodeJSON(data)}`, 'Share link copied');
+      copy(`${base}#w=${U.encodeJSON(data)}`, `Share link for “${state.title}” copied`);
     };
 
     // Present mode
@@ -617,6 +880,9 @@
   Object.values(games).forEach((g) => g.rebuild());
   switchGame(state.game);
   renderHistory();
+  renderWheelBar();
   loadLogos();
+  save();
+  if (openedShare) toast(`Opened the shared wheel “${state.title}” as a new saved wheel`);
   twitch.handleRedirect().then((handled) => { if (!handled) twitch.validate(); });
 })();

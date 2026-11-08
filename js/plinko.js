@@ -11,7 +11,7 @@
   const TAU = Math.PI * 2;
   const MAX_BINS = 24;                                   // the most that still read well on a 1366×768 laptop
   const ROWS = 28;                                       // even, so a chip starting above a bin ends in a bin
-  const SPEEDS = { slow: 210, normal: 140, fast: 85 };   // ms per peg row
+  const SPEEDS = { slow: 260, normal: 185, fast: 110 };  // ms per peg row
   const FLASH_MS = 220;
   const MAX_TWISTS_PER_DROP = 3;
   const SLOWMO_RATE = 0.4;
