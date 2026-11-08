@@ -241,6 +241,11 @@ aside {
 .hip-feed li:nth-child(n+4) { opacity: .65; }
 @keyframes feed-in { from { opacity: 0; transform: translateX(-12px); } }
 .hip-chat-hint { align-self: center; }
+#hipCreatureName {
+  position: absolute; transform: translate(-50%, -50%); width: 160px; text-align: center; z-index: 6;
+  border: 2px solid var(--accent); border-radius: 8px; padding: 6px 8px; font-weight: 700;
+  background: var(--surface); box-shadow: var(--shadow);
+}
 .players { display: flex; flex-direction: column; gap: 8px; }
 .players .label { font-weight: 650; }
 .players-list {

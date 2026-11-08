@@ -232,6 +232,13 @@
     closeDialog: () => { if ($('winDialog').open) $('winDialog').close(); },
     result: onResult,
     savePlayers: () => save(),
+    // Renamed by clicking a creature in the arena; '' restores the theme's default name
+    renameCreature: (i, name) => {
+      const names = (state.hipposNames[state.hipposTheme] ||= ['', '', '', '']);
+      names[i] = name;
+      renderHippoNames();
+      save();
+    },
     // Twitch chat for games that let viewers join
     chat: {
       status: () => (!twitch.canConnect() ? 'nohost' : !twitch.session ? 'off' : twitch.hasScope('user:read:chat') ? 'ok' : 'scope'),

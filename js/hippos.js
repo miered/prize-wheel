@@ -60,8 +60,9 @@
     const command = () => (app.state.hipposCommand || '!join').trim();
 
     // ---------- Players ----------
-    const spawn = (name) => ({
-      name, x: 0.25 + 0.5 * Math.random(), y: 0.15 + 0.2 * Math.random(),
+    // New players drop in near the top; a rebuilt lobby is spread across the arena
+    const spawn = (name, spread = false) => ({
+      name, x: 0.25 + 0.5 * Math.random(), y: spread ? 0.25 + 0.5 * Math.random() : 0.15 + 0.2 * Math.random(),
       vx: (Math.random() - 0.5) * 0.4, vy: 0.2 + Math.random() * 0.2, alive: true, victim: false, from: null, eatenAt: 0, eatenBy: -1,
     });
     const sizeFor = (n) => clamp(0.11 / Math.sqrt(Math.max(1, n)), 0.013, 0.045);
@@ -128,7 +129,7 @@
       feed = [];
       creatures = SIDES.map(() => ({ open: 0, lunge: 0, count: 0 }));
       if (phase !== 'entry') phase = 'lobby';
-      marbles = players().map((p) => spawn(p.name));
+      marbles = players().map((p) => spawn(p.name, true));
       radius = sizeFor(marbles.length);
       renderPlayers();
       renderHud();
@@ -404,7 +405,7 @@
 
       // Marbles (swallowed ones shrink into the mouth)
       const r = radius * A;
-      const showNames = alive() <= 24 || phase !== 'running';
+      const showNames = alive() <= 24;
       for (let i = 0; i < marbles.length; i++) {
         const m = marbles[i];
         let s = 1, x = px(m.x), y = py(m.y);
@@ -433,12 +434,13 @@
       if (phase === 'lobby' || phase === 'entry') {
         const lines = phase === 'entry'
           ? [`Type ${command()} to join!`, fmtSecs(entryEnds - now), `${players().length} marble${players().length === 1 ? '' : 's'} in`]
-          : players().length < 2 ? ['Add players, or open entries', 'so chat can join'] : [`${players().length} marbles ready`, 'Press Start round'];
+          : players().length < 2 ? ['Add players, or open entries', 'so chat can join', 'Click a creature to rename it'] : [`${players().length} marbles ready`, 'Press Start round', 'Click a creature to rename it'];
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         lines.forEach((ln, k) => {
-          ctx.font = `${k === 1 && phase === 'entry' ? 800 : 700} ${k === 1 && phase === 'entry' ? A * 0.1 : A * 0.042}px system-ui, sans-serif`;
+          const small = phase === 'lobby' && k === 2;   // the rename tip
+          ctx.font = `${k === 1 && phase === 'entry' ? 800 : small ? 500 : 700} ${k === 1 && phase === 'entry' ? A * 0.1 : A * (small ? 0.032 : 0.042)}px system-ui, sans-serif`;
           ctx.lineWidth = 4; ctx.strokeStyle = c.surface2; ctx.strokeText(ln, px(0.5), py(0.5) + (k - (lines.length - 1) / 2) * A * 0.085);
-          ctx.fillStyle = k === 1 && phase === 'entry' ? U.cssVar('--accent') : c.text;
+          ctx.fillStyle = k === 1 && phase === 'entry' ? U.cssVar('--accent') : small ? c.muted : c.text;
           ctx.fillText(ln, px(0.5), py(0.5) + (k - (lines.length - 1) / 2) * A * 0.085);
         });
       }
@@ -587,6 +589,49 @@
       draw();
       kick();
     }
+
+    // ---------- Renaming a creature by clicking it ----------
+    const nameInput = $('hipCreatureName');
+    let renaming = -1;
+    function creatureAt(e) {
+      if (!geo) return -1;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left, y = e.clientY - rect.top;
+      return SIDES.findIndex((s) => Math.hypot(x - px(s.cx), y - py(s.cy)) < BODY_R * geo.A);
+    }
+    function startRename(i) {
+      renaming = i;
+      const s = SIDES[i], R = BODY_R * geo.A;
+      nameInput.value = creatureName(i);
+      nameInput.placeholder = theme().names[i];
+      nameInput.style.left = `${px(s.cx) - s.dx * R * 0.62}px`;
+      nameInput.style.top = `${py(s.cy) - s.dy * R * 0.62}px`;
+      nameInput.hidden = false;
+      nameInput.focus();
+      nameInput.select();
+    }
+    function finishRename(keep) {
+      if (renaming < 0) return;
+      const i = renaming;
+      renaming = -1;
+      nameInput.hidden = true;
+      // A blank name goes back to the theme's default
+      if (keep) app.renameCreature(i, nameInput.value.trim().slice(0, 24));
+      draw();
+    }
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finishRename(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finishRename(false); }
+    });
+    nameInput.addEventListener('blur', () => finishRename(true));
+    canvas.addEventListener('click', (e) => {
+      const i = creatureAt(e);
+      if (i >= 0 && phase !== 'running') startRename(i);
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      canvas.style.cursor = phase !== 'running' && creatureAt(e) >= 0 ? 'text' : '';
+      canvas.title = canvas.style.cursor ? 'Click to rename' : '';
+    });
 
     // ---------- Wiring ----------
     $('hipAddForm').addEventListener('submit', (e) => {
