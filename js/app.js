@@ -18,12 +18,14 @@
   const GAMES = {
     wheel: { label: 'Wheel', unit: { one: 'slice', many: 'slices' } },
     plinko: { label: 'Plinko', unit: { one: 'bin', many: 'bins' } },
+    hippos: { label: 'Hippos', unit: { one: 'prize', many: 'prizes' } },
   };
   // Where a logo can appear, and the setting that switches it on
   const SPOTS = {
     wheelCenter: { label: 'Wheel center', setting: 'logoWheelCenter', none: 'Shows SPIN' },
     plinkoChip: { label: 'Plinko chip', setting: 'logoPlinkoChip', none: 'Plain colored chip' },
     plinkoHeader: { label: 'Plinko board header', setting: 'logoPlinkoHeader', none: 'Title text only' },
+    hipposCenter: { label: 'Hippos arena center', setting: 'logoHipposCenter', none: 'Plain arena' },
   };
 
   const list = (text) => () => U.itemsFromText(text);
@@ -57,6 +59,12 @@
       yesno: { label: 'Yes / No', make: list('Yes\nNo\nYes\nNo\nYes') },
       dice: { label: 'Numbers 1–6', make: numbers(6) },
     },
+    hippos: {
+      prizes: {
+        label: 'Sample prizes',
+        make: fromRows([['🎁 Gift card', 2, 'count'], ['☕ Coffee', 3, 'count'], ['👕 T-shirt', 1, 'count'], ['🧢 Hat', 1, 'count'], ['💎 Grand prize', 1, 'count']]),
+      },
+    },
   };
 
   const OLD_PLINKO_TEMPLATE = '🎉 {viewer} dropped from slot {slot} and won {prize}!';
@@ -68,19 +76,25 @@
     goldenName: '🎁 Golden bonus', goldenQty: 1,
     removeMode: 'ask', confetti: true, sound: true, greenScreen: false,
     palette: 'vivid', customColors: '', theme: 'auto', addMode: 'count',
-    logoWheelCenter: true, logoPlinkoChip: true, logoPlinkoHeader: true,
+    logoWheelCenter: true, logoPlinkoChip: true, logoPlinkoHeader: true, logoHipposCenter: true,
+    hipposPlayers: [],                 // [{ name, id? }] — id is the Twitch user id for chat entries
+    hipposCommand: '!join', hipposEntrySecs: 60, hipposLength: 'normal', hipposTheme: 'hippos',
+    hipposNames: {},                   // { theme: [4 custom creature names] }
     twitchClientId: '', announce: true,
     wheelTemplate: '🎉 The wheel landed on {prize}!',
     plinkoTemplate: '🎉 {viewer} dropped from slot {slot}{twists} and won {prize}!',
+    hipposTemplate: '🏆 {viewer} survived {entrants} marbles and won {prize}!{runnersup} · Hungriest: {hungriest}',
   };
   // Saved per wheel rather than app-wide (the wheel's name is the `title`)
   const WHEEL_KEYS = ['title', 'palette', 'customColors', 'duration'];
-  const SETTING_KEYS = Object.keys(DEFAULTS).filter((k) => k !== 'items' && k !== 'twistOn' && !WHEEL_KEYS.includes(k));
+  // Validated separately in applyData()
+  const SPECIAL_KEYS = ['items', 'twistOn', 'hipposPlayers', 'hipposNames'];
+  const SETTING_KEYS = Object.keys(DEFAULTS).filter((k) => !SPECIAL_KEYS.includes(k) && !WHEEL_KEYS.includes(k));
 
   // ---------- State ----------
   // `state` holds app-wide settings plus the active wheel's fields (items, title, palette,
   // customColors, duration); `history` is the active wheel's results. Other wheels wait in `wheels`.
-  const state = { ...DEFAULTS, twistOn: { ...DEFAULTS.twistOn } };
+  const state = { ...DEFAULTS, twistOn: { ...DEFAULTS.twistOn }, hipposPlayers: [], hipposNames: {} };
   let history = [];          // [{ game, name, color, time, slot?, viewer?, twists? }]
   let wheels = [];           // [{ id, name, items, palette, customColors, duration, history }]
   let activeId = '';
@@ -117,6 +131,18 @@
     }
     state.twistCount = Math.max(0, Math.min(12, Math.round(state.twistCount) || 0));
     state.goldenQty = U.clampQty(state.goldenQty);
+    if (Array.isArray(obj.hipposPlayers)) {
+      state.hipposPlayers = obj.hipposPlayers
+        .filter((p) => p && typeof p.name === 'string' && p.name.trim())
+        .slice(0, 200)
+        .map((p) => (typeof p.id === 'string' && p.id ? { name: p.name.trim().slice(0, 40), id: p.id } : { name: p.name.trim().slice(0, 40) }));
+    }
+    if (obj.hipposNames && typeof obj.hipposNames === 'object') {
+      for (const [k, v] of Object.entries(obj.hipposNames)) {
+        if (PW.HIPPO_THEMES[k] && Array.isArray(v)) state.hipposNames[k] = v.slice(0, 4).map((s) => String(s ?? '').slice(0, 24));
+      }
+    }
+    if (!PW.HIPPO_THEMES[state.hipposTheme]) state.hipposTheme = 'hippos';
     // Pick up the new {twists} placeholder if the old default message is still in use
     if (state.plinkoTemplate === OLD_PLINKO_TEMPLATE) state.plinkoTemplate = DEFAULTS.plinkoTemplate;
     if (!GAMES[state.game]) state.game = 'wheel';
@@ -205,8 +231,16 @@
     lock: (on) => $('entriesTab').classList.toggle('locked', on),
     closeDialog: () => { if ($('winDialog').open) $('winDialog').close(); },
     result: onResult,
+    savePlayers: () => save(),
+    // Twitch chat for games that let viewers join
+    chat: {
+      status: () => (!twitch.canConnect() ? 'nohost' : !twitch.session ? 'off' : twitch.hasScope('user:read:chat') ? 'ok' : 'scope'),
+      listen: (onMessage, onError) => twitch.listenChat(onMessage, onError),
+      say: (text) => { if (twitch.session) twitch.say(text); },
+      reconnect: () => twitch.connect(),
+    },
   };
-  const games = { wheel: PW.createWheel(app), plinko: PW.createPlinko(app) };
+  const games = { wheel: PW.createWheel(app), plinko: PW.createPlinko(app), hippos: PW.createHippos(app) };
   const cur = () => games[state.game];
   const busy = () => Object.values(games).some((g) => g.busy());
 
@@ -246,7 +280,8 @@
   }
 
   // ---------- Results ----------
-  // r: { game, prizes: [{ item, color, n }], slot?, viewer?, twists?: [twist keys], golden? }
+  // r: { game, prizes: [{ item, color, n }], slot?, viewer?, twists?: [twist keys], golden?,
+  //      entrants?, runnersUp?: [names], hungriest?: { name, count } }   (the last three: Hippos)
   const twistLabel = (k) => {
     const t = PW.TWISTS[k];
     return t ? `${t.icon === '×2' ? '✖️2' : t.icon} ${t.label}` : k;
@@ -256,31 +291,41 @@
     if (r.golden) parts.push(`⭐ ${state.goldenName}`);
     return parts.join(' + ');
   };
+  // In Hippos the headline is the survivor; elsewhere it's the prize
+  const headline = (r) => (r.game === 'hippos'
+    ? `🏆 ${r.viewer}${r.prizes.length ? ` → ${prizeText(r)}` : ''}`
+    : prizeText(r));
+  const medals = (names = []) => names.map((n, i) => `${['🥈', '🥉'][i]} ${n}`).join(' ');
 
   function onResult(r) {
+    const color = r.prizes[0]?.color || '#F5B400';
     history.unshift({
-      game: r.game, name: prizeText(r), color: r.prizes[0].color, time: new Date().toISOString(),
+      game: r.game, name: headline(r), color, time: new Date().toISOString(),
       slot: r.slot, viewer: r.viewer || undefined, twists: r.twists?.length ? r.twists : undefined,
+      entrants: r.entrants, runnersUp: r.runnersUp?.length ? r.runnersUp : undefined,
     });
     renderHistory();
     save();
     sound.fanfare();
-    if (state.confetti) U.confetti([...r.prizes.map((p) => p.color), ...(r.golden ? ['#ffc53d', '#ffe08a'] : []), ...app.colors()]);
+    if (state.confetti) U.confetti([color, ...r.prizes.map((p) => p.color), ...(r.golden || r.game === 'hippos' ? ['#ffc53d', '#ffe08a'] : []), ...app.colors()]);
     showWinner(r);
     announce(r);
   }
 
-  const fillTemplate = (tpl, r) => tpl.replace(/\{(viewer|prize|slot|channel|twists)\}/g, (_, k) => ({
+  const fillTemplate = (tpl, r) => tpl.replace(/\{(viewer|prize|slot|channel|twists|entrants|runnersup|hungriest)\}/g, (_, k) => ({
     viewer: r.viewer || 'A viewer',
-    prize: prizeText(r),
+    prize: prizeText(r) || 'the round',
     slot: r.slot ?? '',
     channel: twitch.session?.name || '',
     twists: (r.twists || []).map((t) => ` → ${twistLabel(t)}`).join(''),
+    entrants: r.entrants ?? '',
+    runnersup: r.runnersUp?.length ? ` ${medals(r.runnersUp)}` : '',
+    hungriest: r.hungriest ? `${r.hungriest.name} (${r.hungriest.count})` : '',
   })[k]);
 
   function announce(r) {
     if (!state.announce || !twitch.session) return;
-    const tpl = r.game === 'plinko' ? state.plinkoTemplate : state.wheelTemplate;
+    const tpl = { plinko: state.plinkoTemplate, hippos: state.hipposTemplate }[r.game] ?? state.wheelTemplate;
     if (tpl.trim()) twitch.say(fillTemplate(tpl, r));
   }
 
@@ -298,21 +343,32 @@
 
   function showWinner(r) {
     const single = r.prizes.length === 1 && r.prizes[0].n === 1 && !r.golden;
-    const q = r.prizes[0].item.qty;
+    const q = r.prizes[0]?.item.qty ?? 0;
+    const color = r.prizes[0]?.color || '#F5B400';
     lastWinner = r;
-    $('winName').textContent = prizeText(r);
-    $('winHead').style.background = r.prizes[0].color;
-    $('winHead').style.color = U.textOn(r.prizes[0].color);
+    $('winName').textContent = r.game === 'hippos' ? `🏆 ${r.viewer}` : prizeText(r);
+    $('winHead').style.background = color;
+    $('winHead').style.color = U.textOn(color);
     const sub = r.game === 'plinko'
       ? [`Slot ${r.slot}`, r.viewer && `called by ${r.viewer}`, ...(r.twists || []).map(twistLabel)].filter(Boolean).join(' · ')
-      : '';
+      : r.game === 'hippos'
+        ? [r.prizes.length ? `wins ${prizeText(r)}` : null, `survived ${r.entrants} marbles`, medals(r.runnersUp)].filter(Boolean).join(' · ')
+        : '';
     $('winSub').textContent = sub;
     $('winSub').hidden = !sub;
-    $('winAgain').textContent = r.game === 'plinko' ? 'Next drop' : 'Spin again';
+    $('winAgain').textContent = { plinko: 'Next drop', hippos: 'Play again' }[r.game] || 'Spin again';
     const remove = $('winRemove');
     const note = $('winNote');
     note.textContent = '';
     remove.hidden = false;
+    if (!r.prizes.length) {
+      // A Hippos round with no prizes in the list: nothing to take
+      remove.hidden = true;
+      lastWinner = null;
+      $('winDialog').showModal();
+      $('winAgain').focus();
+      return;
+    }
     remove.textContent = !single ? 'Take prizes' : q > 1 ? `Take one (${q} → ${q - 1})` : 'Remove';
     if (state.removeMode === 'auto') {
       takePrizes(r);
@@ -332,7 +388,9 @@
   }
   const metaFor = (h) => (h.game === 'plinko'
     ? ['Plinko', `slot ${h.slot}`, h.viewer, ...(h.twists || []).map(twistLabel)].filter(Boolean).join(' · ')
-    : 'Wheel');
+    : h.game === 'hippos'
+      ? ['Hippos', h.entrants && `${h.entrants} marbles`, medals(h.runnersUp)].filter(Boolean).join(' · ')
+      : 'Wheel');
 
   function renderHistory() {
     const ol = $('history');
@@ -556,6 +614,7 @@
     renderLogos();
     renderTwitch();
     redrawAll();
+    games.hippos.refresh();   // its chat hint depends on the Twitch connection
   }
 
   // ---------- Twitch settings ----------
@@ -630,6 +689,13 @@
     $('announceChk').checked = state.announce;
     $('wheelTemplate').value = state.wheelTemplate;
     $('plinkoTemplate').value = state.plinkoTemplate;
+    $('hipposTemplate').value = state.hipposTemplate;
+    $('hipCommand').value = state.hipposCommand;
+    $('hipEntrySecs').value = state.hipposEntrySecs;
+    $('hipEntrySecsVal').textContent = `${state.hipposEntrySecs}s`;
+    U.setSeg('hipLength', state.hipposLength);
+    $('hipTheme').value = state.hipposTheme;
+    renderHippoNames();
     U.setSeg('removeMode', state.removeMode);
     U.setSeg('dropSpeed', state.dropSpeed);
     $('twistCount').value = state.twistCount;
@@ -641,6 +707,20 @@
     renderLogos();
     renderTwitch();
     applyTheme();
+  }
+
+  // Four name boxes for the current creature theme; blank means the theme's default name
+  function renderHippoNames() {
+    const th = PW.HIPPO_THEMES[state.hipposTheme];
+    const custom = state.hipposNames[state.hipposTheme] || [];
+    $('hipNames').innerHTML = '';
+    th.names.forEach((def, i) => {
+      const input = document.createElement('input');
+      input.type = 'text'; input.maxLength = 24; input.dataset.i = i;
+      input.placeholder = def; input.value = custom[i] || '';
+      input.setAttribute('aria-label', `Creature ${i + 1} name`);
+      $('hipNames').appendChild(input);
+    });
   }
 
   function togglePresent(force) {
@@ -809,6 +889,33 @@
     $('announceChk').onchange = () => { state.announce = $('announceChk').checked; save(); };
     $('wheelTemplate').oninput = () => { state.wheelTemplate = $('wheelTemplate').value; save(); };
     $('plinkoTemplate').oninput = () => { state.plinkoTemplate = $('plinkoTemplate').value; save(); };
+    $('hipposTemplate').oninput = () => { state.hipposTemplate = $('hipposTemplate').value; save(); };
+
+    // Hungry Hippos settings
+    for (const [k, t] of Object.entries(PW.HIPPO_THEMES)) {
+      const o = document.createElement('option');
+      o.value = k; o.textContent = `${t.icon} ${t.label}`;
+      $('hipTheme').appendChild(o);
+    }
+    $('hipCommand').oninput = () => {
+      // One word, e.g. !join or !hippo
+      state.hipposCommand = $('hipCommand').value.trim().split(/\s+/)[0] || '!join';
+      save(); games.hippos.refresh();
+    };
+    $('hipEntrySecs').oninput = () => {
+      state.hipposEntrySecs = +$('hipEntrySecs').value;
+      $('hipEntrySecsVal').textContent = `${state.hipposEntrySecs}s`;
+      save();
+    };
+    segGroup('hipLength', 'hipposLength');
+    $('hipTheme').onchange = () => { state.hipposTheme = $('hipTheme').value; renderHippoNames(); save(); games.hippos.draw(); };
+    $('hipNames').addEventListener('input', (e) => {
+      const i = +e.target.dataset.i;
+      if (Number.isNaN(i)) return;
+      const names = (state.hipposNames[state.hipposTheme] ||= ['', '', '', '']);
+      names[i] = e.target.value.slice(0, 24);
+      save(); games.hippos.draw();
+    });
     $('testChat').onclick = async () => {
       if (await twitch.say('✅ Prize Wheel is connected to chat.')) toast('Test message sent');
     };
@@ -877,6 +984,7 @@
   load();
   wire();
   syncControls();
+  games.hippos.reset();   // picks up the saved players
   Object.values(games).forEach((g) => g.rebuild());
   switchGame(state.game);
   renderHistory();

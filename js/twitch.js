@@ -1,13 +1,14 @@
 /* Optional Twitch connection: sign in with the streamer's account (implicit OAuth, no server),
-   read their profile picture, and post winner announcements to their chat.
-   The access token is stored only in this browser. */
+   read their profile picture, post winner announcements to their chat, and listen to chat
+   (for Hungry Hippos entries). The access token is stored only in this browser. */
 (() => {
   'use strict';
   const PW = window.PW;
   const U = PW.util;
   const SESSION_KEY = 'prizewheel.twitch';
   const STATE_KEY = 'prizewheel.oauthState';
-  const SCOPES = 'user:write:chat';
+  const SCOPES = 'user:write:chat user:read:chat';
+  const EVENTSUB_WS = 'wss://eventsub.wss.twitch.tv/ws';
 
   // opts: { clientId() -> string, changed() }
   PW.createTwitch = (opts) => {
@@ -63,7 +64,10 @@
         if (!r.ok) throw new Error(`Twitch returned ${r.status}`);
         const u = (await r.json()).data?.[0];
         if (!u) throw new Error('No user returned');
-        session = { token, clientId: pending.clientId, id: u.id, login: u.login, name: u.display_name || u.login, image: u.profile_image_url };
+        session = {
+          token, clientId: pending.clientId, id: u.id, login: u.login, name: u.display_name || u.login, image: u.profile_image_url,
+          scopes: (p.get('scope') || '').split(/\s+/).filter(Boolean),
+        };
         persist();
         U.toast(`Connected to Twitch as ${session.name}`);
         opts.changed();
@@ -82,8 +86,65 @@
         if (r.status === 401) {
           session = null; avatar = null; persist(); opts.changed();
           U.toast('Your Twitch sign-in expired. Reconnect in Settings.');
+          return;
         }
+        // Remember which permissions this sign-in has (older sign-ins can't read chat yet)
+        const info = await r.json();
+        if (Array.isArray(info.scopes)) { session.scopes = info.scopes; persist(); opts.changed(); }
       } catch { /* offline: keep the session and try again next load */ }
+    }
+
+    const hasScope = (scope) => !!session?.scopes?.includes(scope);
+
+    // Listens to the streamer's chat over Twitch EventSub. Calls onMessage({ id, login, name, text })
+    // for each chat message, and onError(status) if Twitch refuses. Returns a function that stops listening.
+    function listenChat(onMessage, onError) {
+      let ws = null, stopped = false, retry = 0;
+      function open(url = EVENTSUB_WS, isReconnect = false) {
+        const sock = new WebSocket(url);
+        if (!isReconnect) ws = sock;
+        sock.onmessage = async (ev) => {
+          const msg = U.safe(() => JSON.parse(ev.data), null);
+          const type = msg?.metadata?.message_type;
+          if (type === 'session_welcome') {
+            if (isReconnect) {
+              // Twitch moved us to a new connection; subscriptions carry over
+              const old = ws; ws = sock;
+              if (old) { old.onclose = null; old.close(); }
+              return;
+            }
+            try {
+              const r = await fetch('https://api.twitch.tv/helix/eventsub/subscriptions', {
+                method: 'POST',
+                headers: { ...headers(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  type: 'channel.chat.message', version: '1',
+                  condition: { broadcaster_user_id: session.id, user_id: session.id },
+                  transport: { method: 'websocket', session_id: msg.payload.session.id },
+                }),
+              });
+              if (!r.ok) { onError?.(r.status); stop(); }
+            } catch { onError?.(0); stop(); }
+          } else if (type === 'notification' && msg.metadata.subscription_type === 'channel.chat.message') {
+            const e = msg.payload.event;
+            onMessage({ id: e.chatter_user_id, login: e.chatter_user_login, name: e.chatter_user_name || e.chatter_user_login, text: e.message?.text || '' });
+          } else if (type === 'session_reconnect') {
+            open(msg.payload.session.reconnect_url, true);
+          }
+        };
+        sock.onclose = () => {
+          if (stopped || sock !== ws) return;
+          retry = setTimeout(() => { if (!stopped) open(); }, 2000);
+        };
+      }
+      function stop() {
+        stopped = true;
+        clearTimeout(retry);
+        if (ws) { ws.onclose = null; ws.close(); }
+      }
+      if (!session) { onError?.(401); return () => {}; }
+      open();
+      return stop;
     }
 
     async function say(message) {
@@ -118,7 +179,7 @@
     loadAvatar();
 
     return {
-      connect, disconnect, handleRedirect, validate, say, redirectUri, canConnect,
+      connect, disconnect, handleRedirect, validate, say, redirectUri, canConnect, hasScope, listenChat,
       get session() { return session; },
       get avatar() { return avatar; },
     };

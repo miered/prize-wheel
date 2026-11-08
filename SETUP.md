@@ -93,6 +93,20 @@ you click **Connect Twitch** again.
 
 ---
 
+## Hungry Hippos: letting chat join
+
+Hungry Hippos lets viewers join by typing a command in chat (`!join` by default; change it in
+**Settings → Hungry Hippos**). Reading chat needs one extra Twitch permission:
+
+- If you connected Twitch before Hippos existed, the Hippos tab shows **Reconnect Twitch**.
+  Click it and approve once.
+- New connections ask for it automatically.
+
+Click **Open entries** to start the countdown. Anyone who types the command joins once, and you
+can add or remove names by hand. Chat is only read while entries are open.
+
+---
+
 ## Using it in OBS
 
 - Turn on **Settings → Look → Green-screen background**.

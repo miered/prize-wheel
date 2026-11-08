@@ -39,8 +39,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 
 /* Only show elements for the active game */
-body[data-game="wheel"] [data-only="plinko"],
-body[data-game="plinko"] [data-only="wheel"] { display: none !important; }
+body:not([data-game="wheel"]) [data-only="wheel"],
+body:not([data-game="plinko"]) [data-only="plinko"],
+body:not([data-game="hippos"]) [data-only="hippos"] { display: none !important; }
 
 /* ---------- Header ---------- */
 header {
@@ -203,13 +204,13 @@ aside {
 .item.excluded .iname { font-style: italic; }
 
 /* Plinko twist banner */
-#twistBanner {
+#twistBanner, .game-banner {
   position: absolute; left: 50%; top: 22%; transform: translate(-50%, -50%) scale(.6); opacity: 0;
   padding: 12px 24px; border-radius: 16px; background: var(--tw, var(--accent)); color: #fff;
   font: 900 clamp(22px, 4vw, 44px)/1.1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em;
   text-shadow: 0 2px 6px rgba(0,0,0,.35); box-shadow: 0 10px 40px rgba(0,0,0,.35); pointer-events: none; white-space: nowrap;
 }
-#twistBanner.show { animation: twist-pop 1.5s ease-out forwards; }
+#twistBanner.show, .game-banner.show { animation: twist-pop 1.5s ease-out forwards; }
 @keyframes twist-pop {
   0% { opacity: 0; transform: translate(-50%, -50%) scale(.6) rotate(-4deg); }
   15% { opacity: 1; transform: translate(-50%, -50%) scale(1.08) rotate(2deg); }
@@ -217,6 +218,43 @@ aside {
   80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -60%) scale(.95); }
 }
+
+/* Hungry Hippos */
+#hipposStage { justify-content: stretch; }
+#hipposWrap { position: relative; flex: 1; width: 100%; min-height: 0; }
+#hippos { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hip-hud {
+  position: absolute; top: 12px; left: 12px; max-width: min(42%, 300px); pointer-events: none;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.hip-alive {
+  align-self: flex-start; background: var(--accent); color: var(--accent-text); font-weight: 800;
+  padding: 6px 12px; border-radius: 999px; font-size: 15px; font-variant-numeric: tabular-nums;
+}
+.hip-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.hip-feed li {
+  background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hip-feed li:first-child { animation: feed-in .3s ease-out; }
+.hip-feed li:nth-child(n+4) { opacity: .65; }
+@keyframes feed-in { from { opacity: 0; transform: translateX(-12px); } }
+.hip-chat-hint { align-self: center; }
+.players { display: flex; flex-direction: column; gap: 8px; }
+.players .label { font-weight: 650; }
+.players-list {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; max-height: 160px; overflow: auto;
+}
+.players-list .player {
+  display: inline-flex; align-items: center; gap: 4px; background: var(--surface-2); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 13px;
+}
+.players-list .player small { color: #9146ff; font-weight: 700; font-size: 10px; text-transform: uppercase; }
+.players-list .player .del { width: 22px; height: 22px; font-size: 15px; }
+.players-list .empty { padding: 8px 0; text-align: left; }
+.hip-names { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+.hip-names input { border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.hip-names input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* Twist settings */
 .twist-grid { display: flex; flex-direction: column; gap: 6px; }
@@ -326,7 +364,7 @@ body.present.green { background: var(--chroma); }
   body { height: auto; min-height: 100vh; }
   main { grid-template-columns: 1fr; grid-template-rows: auto; padding: 16px; gap: 16px; }
   #wheelWrap { width: min(100%, 70vh); }
-  #plinkoStage { height: 85vh; }
+  #plinkoStage, #hipposStage { height: 85vh; }
   aside { min-height: 420px; max-height: 90vh; }
   header { padding: 10px 16px; flex-wrap: wrap; }
   #title { flex-basis: 100%; }

@@ -197,7 +197,20 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
       o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.36);
     }
-    return { unlock, tick, fanfare, twist };
+    // Low "CHOMP" for Hungry Hippos
+    function chomp() {
+      if (!isOn()) return;
+      const a = unlock(); if (!a) return;
+      const t = a.currentTime;
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(190, t);
+      o.frequency.exponentialRampToValueAtTime(55, t + 0.14);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.14, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.2);
+    }
+    return { unlock, tick, fanfare, twist, chomp };
   }
 
   // ---------- Confetti ----------

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Prize Wheel</title>
 <meta name="description" content="Clean, ad-free prize games for giveaways and streams: a spinning wheel and Plinko.">
-<link rel="stylesheet" href="css/app.css?v=4">
+<link rel="stylesheet" href="css/app.css?v=5">
 </head>
 <body data-game="wheel">
 <header>
@@ -13,6 +13,7 @@
   <div class="seg" id="gameSwitch" role="group" aria-label="Game">
     <button data-v="wheel">Wheel</button>
     <button data-v="plinko">Plinko</button>
+    <button data-v="hippos">Hippos</button>
   </div>
   <button class="icon-btn twitch-btn" id="twitchHeaderBtn" hidden>
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0 1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
@@ -73,6 +74,23 @@
     </form>
   </section>
 
+  <section class="stage" id="hipposStage" data-only="hippos">
+    <div id="hipposWrap">
+      <canvas id="hippos" aria-label="Hungry Hippos arena"></canvas>
+      <div class="hip-hud" id="hipHud" hidden>
+        <div class="hip-alive" id="hipAlive"></div>
+        <ol class="hip-feed" id="hipFeed" aria-live="polite"></ol>
+      </div>
+      <div class="game-banner" id="hipBanner" aria-live="polite"></div>
+    </div>
+    <div class="drop-bar">
+      <button class="btn" id="hipEntriesBtn">Open entries</button>
+      <button class="btn primary" id="hipStartBtn">Start round</button>
+      <span class="hint hip-chat-hint" id="hipChatHint"></span>
+      <button class="chip" id="hipReconnect" hidden>Reconnect Twitch</button>
+    </div>
+  </section>
+
   <aside>
     <div class="tabs" role="tablist">
       <button role="tab" aria-selected="true" data-tab="entriesTab">Entries <span class="count" id="entryCount"></span></button>
@@ -81,6 +99,18 @@
     </div>
 
     <div class="tab active" id="entriesTab">
+      <section class="players" data-only="hippos">
+        <div class="row between">
+          <span class="label">Players <span class="count" id="hipCount"></span></span>
+          <button class="chip" id="hipClear">Remove all</button>
+        </div>
+        <form class="add-row" id="hipAddForm" autocomplete="off">
+          <input type="text" id="hipAddName" placeholder="Add a player…" aria-label="Player name" maxlength="40">
+          <button class="btn primary sm" type="submit">Add</button>
+        </form>
+        <ul class="players-list" id="hipPlayers" aria-label="Players"></ul>
+        <p class="section-title">Prizes the survivor can win</p>
+      </section>
       <form class="add-row" id="addForm" autocomplete="off">
         <input type="text" id="addName" placeholder="Add an entry…" aria-label="Entry name" maxlength="120">
         <input type="number" id="addQty" value="1" min="1" max="999" aria-label="Quantity" title="How many">
@@ -103,6 +133,7 @@
         <button class="chip" id="undoBtn" disabled>Undo</button>
       </div>
       <p class="hint">Entries and counts are shared by every game. Untick ✓ to leave one out of this game.</p>
+      <p class="hint" data-only="hippos">The survivor wins one of these at random. Separate copies of a prize give it better odds.</p>
       <p class="hint" data-only="plinko">Bins run left to right in list order. The chip tends to land near where it starts, so edge bins are the hardest to reach.</p>
       <ul id="itemList" aria-label="Entries"></ul>
       <div id="pastePanel" hidden>
@@ -165,6 +196,30 @@
         <p class="hint">Won on top of the landed prize when a Golden peg is hit. Golden pegs only appear while this has stock.</p>
       </div>
       <button class="chip" id="rerollTwists" data-only="plinko" style="align-self:flex-start">Re-roll twist pegs</button>
+
+      <p class="section-title" data-only="hippos">Hungry Hippos</p>
+      <div class="field" data-only="hippos">
+        <label for="hipCommand">Chat command to join</label>
+        <input type="text" id="hipCommand" maxlength="25" spellcheck="false" placeholder="!join">
+      </div>
+      <div class="field" data-only="hippos">
+        <label for="hipEntrySecs">Entry window: <span id="hipEntrySecsVal"></span></label>
+        <input type="range" id="hipEntrySecs" min="15" max="180" step="5">
+      </div>
+      <div class="field" data-only="hippos">
+        <span class="label">Round length</span>
+        <div class="seg" id="hipLength">
+          <button data-v="short">Short</button>
+          <button data-v="normal">Normal</button>
+          <button data-v="long">Long</button>
+        </div>
+        <p class="hint">About 45 seconds, 75 seconds or 2 minutes, however many players there are.</p>
+      </div>
+      <div class="field" data-only="hippos">
+        <label for="hipTheme">Creatures</label>
+        <select id="hipTheme"></select>
+        <div class="hip-names" id="hipNames"></div>
+      </div>
       <hr>
 
       <p class="section-title">Winners</p>
@@ -213,6 +268,11 @@
         <span class="meta"><label class="check"><input type="checkbox"> Plinko board header</label><span class="hint"></span></span>
         <span class="acts"><button class="chip" data-act="upload">Upload</button><button class="chip" data-act="clear">Remove</button></span>
       </div>
+      <div class="logo-row" data-spot="hipposCenter">
+        <span class="logo-thumb"></span>
+        <span class="meta"><label class="check"><input type="checkbox"> Hippos arena center</label><span class="hint"></span></span>
+        <span class="acts"><button class="chip" data-act="upload">Upload</button><button class="chip" data-act="clear">Remove</button></span>
+      </div>
       <input type="file" id="logoFile" accept="image/*" hidden>
       <hr>
 
@@ -246,7 +306,11 @@
         <label for="plinkoTemplate">Plinko message</label>
         <input type="text" id="plinkoTemplate" maxlength="400">
       </div>
-      <p class="hint">Placeholders: <code>{prize}</code> <code>{viewer}</code> <code>{slot}</code> <code>{channel}</code></p>
+      <div class="field">
+        <label for="hipposTemplate">Hungry Hippos message</label>
+        <input type="text" id="hipposTemplate" maxlength="400">
+      </div>
+      <p class="hint">Placeholders: <code>{prize}</code> <code>{viewer}</code> <code>{slot}</code> <code>{twists}</code> <code>{channel}</code>, and for Hippos <code>{entrants}</code> <code>{runnersup}</code> <code>{hungriest}</code></p>
       <hr>
 
       <div class="row">
@@ -274,11 +338,12 @@
 <canvas id="confetti"></canvas>
 <div id="toast" role="status"></div>
 
-<script src="js/core.js?v=4"></script>
-<script src="js/items.js?v=4"></script>
-<script src="js/wheel.js?v=4"></script>
-<script src="js/plinko.js?v=4"></script>
-<script src="js/twitch.js?v=4"></script>
-<script src="js/app.js?v=4"></script>
+<script src="js/core.js?v=5"></script>
+<script src="js/items.js?v=5"></script>
+<script src="js/wheel.js?v=5"></script>
+<script src="js/plinko.js?v=5"></script>
+<script src="js/hippos.js?v=5"></script>
+<script src="js/twitch.js?v=5"></script>
+<script src="js/app.js?v=5"></script>
 </body>
 </html>
